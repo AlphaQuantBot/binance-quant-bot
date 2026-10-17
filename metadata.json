@@ -1,0 +1,8 @@
+{
+  "name": "Binance Kripto Botu & AI Trade Terminal",
+  "description": "Gerçek zamanlı Binance piyasa takibi, yapay zeka destekli fiyat tahminlemesi, otomatik alım-satım botları, erken aşama token radarı ve risk yönetimi platformu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

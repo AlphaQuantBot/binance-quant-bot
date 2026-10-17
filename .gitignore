@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.server_credentials.json
+.cost_basis.json
+*.bak
+*.local
+*.tar.gz
+*.tgz
+*.zip
+
