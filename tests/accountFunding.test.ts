@@ -1,4 +1,4 @@
-import { rulesFixture, policyFixture } from './fixtures/trading';
+import { rulesFixture, policyFixture, dailyEvidenceFixture } from './fixtures/trading';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
@@ -45,7 +45,7 @@ test('external/manual open order and unknown local order block readiness',()=>{
 });
 function funded(overrides:Partial<AccountAdapter>={},now=()=>1002){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aq-funded-'));let latest:Confirmation|undefined,calls=0;
- const adapter:AccountAdapter={tradeContext:async()=>rulesFixture(),submit:async(i,id)=>{calls++;latest=confirmation(i,id);return latest;},query:async()=>latest??null,accountSnapshot:async()=>snapshot(),...overrides};
+ const adapter:AccountAdapter={dailyRiskEvidence:async snapshot=>dailyEvidenceFixture(snapshot),tradeContext:async()=>rulesFixture(),submit:async(i,id)=>{calls++;latest=confirmation(i,id);return latest;},query:async()=>latest??null,accountSnapshot:async()=>snapshot(),...overrides};
  const create=()=>new FundedExecution(path.join(dir,'orders'),path.join(dir,'capital'),accountId,adapter,now,policyFixture());
  return {dir,adapter,engine:create(),create,calls:()=>calls};
 }

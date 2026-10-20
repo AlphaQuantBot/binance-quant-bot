@@ -1,10 +1,11 @@
+import { DailyRiskGate, type DailyRiskEvidence } from './dailyRiskGate';
 import { assertPolicy, validateTrade, type RiskPolicy, type TradeContext } from './tradingRules';
 import { CapitalLedger, validateFundingIntent, type Debit } from './capitalLedger';
 import { OrderExecution, type Adapter, type Intent } from './orderExecution';
 import type { AccountSnapshot } from './accountSnapshot';
 import { units } from './exactDecimal';
 export type FundingPlan = {baseAsset:string; quoteAsset:string; buyQuoteBudget?:string; feeDebits:Debit[]};
-export type AccountAdapter = Adapter & {accountSnapshot():Promise<AccountSnapshot>;tradeContext?(symbol:string):Promise<TradeContext>};
+export type AccountAdapter = Adapter & {accountSnapshot():Promise<AccountSnapshot>;tradeContext?(symbol:string):Promise<TradeContext>;dailyRiskEvidence?(snapshot:AccountSnapshot):Promise<DailyRiskEvidence>};
 function debitsFor(i:Intent, p:FundingPlan): Debit[] {
   validateFundingIntent(i);
   if (!p || !/^[A-Z0-9]{1,24}$/.test(p.baseAsset) || !/^[A-Z0-9]{1,24}$/.test(p.quoteAsset) || p.baseAsset===p.quoteAsset || i.symbol!==p.baseAsset+p.quoteAsset || !Array.isArray(p.feeDebits) || !p.feeDebits.length) throw Error('INVALID_FUNDING_PLAN');
@@ -17,6 +18,7 @@ export class FundedExecution {
   private orders:OrderExecution;
   private capital:CapitalLedger;
   private busy=false;
+  private daily:DailyRiskGate;
   private snapshot?:AccountSnapshot;
   constructor(orderFile:string,capitalFile:string,private accountId:string,private adapter:AccountAdapter,private now:()=>number=Date.now,private policy?:RiskPolicy) {
     this.orders=new OrderExecution(orderFile,{
@@ -24,6 +26,7 @@ export class FundedExecution {
       query:async(i,id)=>{const result=await adapter.query(i,id);if(!result)throw Error('ORDER_NOT_FOUND_ON_EXCHANGE');return result;},
     });
     try{this.capital=new CapitalLedger(capitalFile,accountId,now);}catch(e){this.orders.close();throw e;}
+    try{this.daily=new DailyRiskGate(capitalFile+'.daily-risk',accountId);}catch(e){this.capital.close();this.orders.close();throw e;}
   }
   async refresh() {
     if(this.busy)throw Error('FUNDED_EXECUTION_BUSY');
@@ -48,12 +51,18 @@ export class FundedExecution {
     assertPolicy(this.policy);
     if(!this.snapshot)throw Error('FRESH_ACCOUNT_REQUIRED');
     if(!this.adapter.tradeContext)throw Error('TRADE_CONTEXT_REQUIRED');
+    if(!this.adapter.dailyRiskEvidence)throw Error('DAILY_RISK_EVIDENCE_REQUIRED');
     this.busy=true;
     try {
       const context=await this.adapter.tradeContext(intent.symbol);
       const verified=validateTrade(intent,context,this.snapshot,this.policy,this.now());
       if(plan.baseAsset!==verified.baseAsset||plan.quoteAsset!==verified.quoteAsset)throw Error('FUNDING_ASSET_MISMATCH');
       if(intent.side==='BUY'&&units(plan.buyQuoteBudget!)<units(verified.maximumBuyPrincipal))throw Error('QUOTE_BUDGET_BELOW_LIMIT_COST');
+      const evidence=await this.adapter.dailyRiskEvidence(structuredClone(this.snapshot));
+      const daily=this.daily.assess(evidence,this.snapshot,this.policy.dailyLossLimitQuote,this.now());
+      if(daily.latched&&intent.side==='BUY')throw Error('DAILY_LOSS_LIMIT_REACHED');
+      // Recheck mutable halt policy and freshness after asynchronous risk evidence retrieval.
+      validateTrade(intent,context,this.snapshot,this.policy,this.now());
       // Reserve only after preflight succeeds; no orphan holds for known validation failures.
       this.capital.reserve(intent,debits);
       this.capital.invalidate();this.snapshot=undefined;
@@ -63,7 +72,8 @@ export class FundedExecution {
     } finally{this.busy=false;}
   }
 
+  emergencyHalt(){this.daily.halt();}
   available(asset:string){return this.capital.available(asset);}
   list(){return this.orders.list();}
-  close(){if(this.busy)throw Error('FUNDED_EXECUTION_BUSY');this.orders.close();this.capital.close();}
+  close(){if(this.busy)throw Error('FUNDED_EXECUTION_BUSY');this.orders.close();this.capital.close();this.daily.close();}
 }

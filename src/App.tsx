@@ -1,3 +1,4 @@
+import { paperExit, nextPaperWinRate, paperAvailableCapital, paperSymbolPrice } from './utils/paperRisk';
 import { canUseMarketPayload, isFreshMarket, type MarketProvenance } from './utils/marketProvenance';
 import { safeSettings } from './utils/safeSettings';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -78,10 +79,6 @@ export default function App() {
   // User & Bot state
   const [settings, setSettings] = useState<UserSecuritySettings>(() => {
     const s = loadSecuritySettings();
-    // Guarantee 1000 USDT if previously at default 10000 or unconfigured
-    if (s.simulatedBalanceUsdt === 10000) {
-      s.simulatedBalanceUsdt = 1000;
-    }
     // Clean up any stale placeholders so fresh Binance balance takes over
     if (s.liveSpotBalanceUsdt === 58.53 || s.liveSpotBalanceUsdt === 57.73) {
       s.liveSpotBalanceUsdt = 0;
@@ -1016,14 +1013,6 @@ export default function App() {
     const timeSinceLastTradeSec = (now - lastTradeTimeRef.current) / 1000;
     const isWatchdogTrigger = timeSinceLastTradeSec >= 5.0;
 
-    // Balance health safeguard in Paper mode: auto-replenish if capital is low
-    if (!isLive && currentSet.simulatedBalanceUsdt < 100) {
-      setSettings(prev => ({
-        ...prev,
-        simulatedBalanceUsdt: 1000.00
-      }));
-    }
-
     // 0. HIGH-FREQUENCY SCALP WATCHDOG FOR REAL BINANCE SPOT HOLDINGS:
     // Automatically monitor real coins in Binance spot wallet (e.g. OGN, RLC) and lock profit immediately!
     if (isLive && currentSet.autoLiveExecutionEnabled && !isClosingSpotHolding) {
@@ -1087,6 +1076,7 @@ export default function App() {
     }
 
     let hasExecutedBuyThisCycle = false;
+    let paperReservedThisCycle = 0;
 
     candidateBots.forEach((bot, botIdx) => {
       // DIVERSIFIED ALTCOIN EXECUTION ENGINE WITH STRICT MULTI-PARAMETER BUY FILTER:
@@ -1101,7 +1091,7 @@ export default function App() {
         ...spotBalancesRef.current.filter(s => s.asset !== 'USDT' && s.asset !== 'TRY' && s.asset !== 'BNB' && (s.estimatedUsd || 0) >= 2.0).map(s => `${s.asset}USDT`)
       ]);
 
-      if (isAltcoinHunter && currentTickers && currentTickers.length > 0) {
+      if (!bot.hasOpenPosition && isAltcoinHunter && currentTickers && currentTickers.length > 0) {
         // SERT TOKEN ALIM FİLTRESİ: Tüm parametreleri süzgeçten geçir (Hacim, Sağlıklı İvme, Tepe Korunumu, Kâr Skoru)
         const qualifiedPicks = getBestBuyCandidates(currentTickers, busySymbols, 10);
         
@@ -1135,7 +1125,7 @@ export default function App() {
         }
       }
 
-      const livePrice = currentPrices[targetSymbol] || currentPrices[bot.symbol];
+      const livePrice = paperSymbolPrice(currentPrices,targetSymbol);
       if (!livePrice || livePrice <= 0) return;
 
       const hasPosition = !!bot.hasOpenPosition;
@@ -1194,6 +1184,7 @@ export default function App() {
           lastTradeTimeRef.current = now;
           const targetTpPercent = candidateEvaluation?.recommendedTakeProfitPercent || bot.takeProfitPercent;
           const targetSlPercent = candidateEvaluation?.recommendedTrailingStopPercent || bot.trailingStopPercent;
+        if(!Number.isFinite(targetTpPercent)||targetTpPercent<=0||!Number.isFinite(targetSlPercent)||targetSlPercent<=0||targetSlPercent>=100)return;
           const tpPrice = parseFloat((livePrice * (1 + targetTpPercent / 100)).toFixed(2));
           const slPrice = parseFloat((livePrice * (1 - targetSlPercent / 100)).toFixed(2));
           const fallbackQty = parseFloat((liveTradeSize / livePrice).toFixed(4));
@@ -1396,11 +1387,15 @@ export default function App() {
 
         // --- SUB-BRANCH 2: PAPER SIMULATION EXECUTION ---
         // GÜN İÇİ SERMAYE KORUMASI: Tek bir tokene portföyün max %20'si ayrılır (asla tüm kasa bağlanmaz)
-        const maxPaperCapital = Math.max(50, Math.min(180, currentSet.simulatedBalanceUsdt * 0.20));
-        const tradeCapital = Math.min(bot.allocatedCapitalUsdt, maxPaperCapital);
-        const amount = parseFloat((tradeCapital / livePrice).toFixed(4));
+        const freePaperCapital = Math.max(0,paperAvailableCapital(currentSet.simulatedBalanceUsdt,currentBots)-paperReservedThisCycle);
+        const maxPaperCapital = Math.min(180,freePaperCapital*0.20);
+        const tradeCapital = Math.min(bot.allocatedCapitalUsdt,maxPaperCapital);
+        const amount = Math.floor((tradeCapital/livePrice)*1e8)/1e8;
+        if(!Number.isFinite(amount)||amount<=0||!Number.isFinite(tradeCapital)||tradeCapital<=0)return;
+        paperReservedThisCycle += amount*livePrice;
         const targetTpPercent = candidateEvaluation?.recommendedTakeProfitPercent || bot.takeProfitPercent;
         const targetSlPercent = candidateEvaluation?.recommendedTrailingStopPercent || bot.trailingStopPercent;
+        if(!Number.isFinite(targetTpPercent)||targetTpPercent<=0||!Number.isFinite(targetSlPercent)||targetSlPercent<=0||targetSlPercent>=100)return;
         const slPrice = parseFloat((livePrice * (1 - targetSlPercent / 100)).toFixed(2));
         const tpPrice = parseFloat((livePrice * (1 + targetTpPercent / 100)).toFixed(2));
 
@@ -1433,6 +1428,10 @@ export default function App() {
           symbol: targetSymbol,
           hasOpenPosition: true,
           entryPrice: livePrice,
+          highestPriceSinceEntry: livePrice,
+          positionOrderId: orderId,
+          trailingStopPercent: targetSlPercent,
+          takeProfitPercent: targetTpPercent,
           positionQty: amount,
           positionOpenedAt: now,
           lastSignal: 'BUY',
@@ -1458,64 +1457,28 @@ export default function App() {
 
       // CASE B: Bot has an open position -> EVALUATE TAKE-PROFIT OR STOP-LOSS WITH ANTI-FEE SHIELD
       if (hasPosition) {
-        const entryP = bot.entryPrice || livePrice;
-        const livePnlPct = ((livePrice - entryP) / entryP) * 100;
-        const timeInTradeSec = bot.positionOpenedAt ? (now - bot.positionOpenedAt) / 1000 : 30;
-
-        // Binance Commission Aware Net PnL Calculation (with BNB 25% discount support!)
-        const hasBnbFeeDiscount = !!currentSet.bnbBudget?.discountActive || (spotBalancesRef.current.some(x => x.asset === 'BNB' && x.free * 680 >= 1.0));
-        const roundTripFeeRate = hasBnbFeeDiscount ? 0.0015 : 0.0020; // 0.075% x 2 with BNB vs 0.10% x 2 standard
-        const roundTripFeePct = hasBnbFeeDiscount ? 0.15 : 0.20;
-        const spreadSafetyBufferPct = 0.10; // 0.10% tahta alış-satış makas payı
-        const totalBreakevenPct = roundTripFeePct + spreadSafetyBufferPct; // ~0.30% başabaş noktası
-
-        // --- ASLA ZARARINA SATMA (SIFIR KAYIP / YALNIZCA NET KÂRLA SATIŞ YAP) ---
-        // 1. ZARAR KORUMASI: Fiyat maliyetin altındaysa veya başabaş komisyonunu karşılamıyorsa ASLA SATMA!
-        if (livePnlPct <= totalBreakevenPct) {
-          const holdStatusMsg = `🛡️ SIFIR KAYIP KORUMASI: ${bot.symbol} maliyetin altında ($${livePrice.toFixed(4)} / Giriş: $${entryP.toFixed(4)}, %${livePnlPct.toFixed(2)}). Asla zararına satılmaz; +%${(bot.takeProfitPercent || 2.8).toFixed(1)} net kâr hedefine kadar tutuluyor (HODL).`;
-          if (bot.lastAction !== holdStatusMsg) {
-            setBots(prev => prev.map(b => b.id === bot.id ? { ...b, lastAction: holdStatusMsg } : b));
-          }
-          return; // ERKEN ÇIKIŞ: Zararına satış KESİNLİKLE yasaklandı!
-        }
-
-        // 2. YALNIZCA NET KÂRLA SATIŞ YAP:
-        // Komisyon ve spread düşüldükten sonra Net Kâr en az +%1.50 - +%3.20 olmalıdır.
-        const requiredGrossProfitPct = Math.max(bot.takeProfitPercent || 2.5, totalBreakevenPct + 1.20);
-        const isTakeProfit = livePnlPct >= requiredGrossProfitPct;
-
-        // Force komutu dahi olsa başabaş komisyonunu kurtarmayan satış yapılmaz
-        const shouldSell = isTakeProfit || (force && livePnlPct > totalBreakevenPct + 0.50);
-        if (!shouldSell) {
-          return;
-        }
-
+        // Paper only: a trailing stop can realize a loss. Do not invent missing entry/quantity.
+        const exit=paperExit({entry:bot.entryPrice!,price:livePrice,quantity:bot.positionQty!,highest:bot.highestPriceSinceEntry,stopPercent:bot.trailingStopPercent,takeProfitPercent:bot.takeProfitPercent,feeRate:0.001});
+        if(!exit)return;
+        if(exit.highest!==bot.highestPriceSinceEntry)setBots(prev=>prev.map(b=>b.id===bot.id?{...b,highestPriceSinceEntry:exit.highest}:b));
+        if(!exit.reason)return;
         lastTradeTimeRef.current = now;
-
-        const isWin = true;
-        const finalPnlPct = livePnlPct;
-
-        const binanceFeeUsdt = parseFloat((bot.allocatedCapitalUsdt * roundTripFeeRate).toFixed(4));
-        const rawProfitUsdt = parseFloat(((bot.allocatedCapitalUsdt * finalPnlPct) / 100).toFixed(2));
-        const netProfitUsdt = parseFloat((rawProfitUsdt - binanceFeeUsdt).toFixed(2));
-        const netPnlPct = parseFloat((finalPnlPct - roundTripFeePct).toFixed(2));
-
-        if (netProfitUsdt <= 0 || netPnlPct <= 0) {
-          return; // Net kâr pozitif değilse satma!
-        }
-
-        const newTradesCount = bot.tradesCount + 1;
-        const newWinRate = Math.min(99, Math.round(((bot.winRate * bot.tradesCount) + 100) / newTradesCount));
-        const newTotalProfit = parseFloat((bot.totalProfitUsdt + netProfitUsdt).toFixed(2));
-        const newTotalPercent = parseFloat(((newTotalProfit / bot.allocatedCapitalUsdt) * 100).toFixed(2));
-
-        const actionMsg = `🎯 $${livePrice.toFixed(4)} gün içi net kâr alındı (+%${netPnlPct.toFixed(2)} Net, Komisyon: -$${binanceFeeUsdt.toFixed(3)})`;
+        const isWin=exit.isWin,finalPnlPct=exit.grossPercent;
+        const binanceFeeUsdt=parseFloat(exit.fees.toFixed(8)); // Explicit assumed PAPER fee, not verified Binance fees.
+        const rawProfitUsdt=parseFloat(exit.gross.toFixed(8));
+        const netProfitUsdt=parseFloat(exit.net.toFixed(8));
+        const netPnlPct=parseFloat(exit.netPercent.toFixed(4));
+        const newTradesCount=bot.tradesCount+1;
+        const newWinRate=nextPaperWinRate(bot.tradesCount,bot.winRate,isWin);
+        const newTotalProfit=parseFloat((bot.totalProfitUsdt+netProfitUsdt).toFixed(8));
+        const newTotalPercent=bot.allocatedCapitalUsdt>0?newTotalProfit/bot.allocatedCapitalUsdt*100:0;
+        const actionMsg=`Simüle ${exit.reason==='STOP_LOSS'?'stop':'kâr hedefi'}: $${livePrice.toFixed(4)}, net ${netPnlPct>=0?'+':''}%${netPnlPct.toFixed(2)} (varsayılan ücret: $${binanceFeeUsdt.toFixed(4)})`;
 
         // Update matching open order to FILLED with explicit fee & net PnL
         setOrders(prev => {
           let matched = false;
           const updated = prev.map(o => {
-            if (!matched && o.symbol === bot.symbol && o.status === 'PENDING') {
+            if (!matched && o.symbol === bot.symbol && o.status === 'PENDING' && (bot.positionOrderId ? o.id === bot.positionOrderId : o.botName === bot.name && o.executionSource === 'BOT')) {
               matched = true;
               return {
                 ...o,
@@ -1538,8 +1501,8 @@ export default function App() {
               side: 'SELL',
               type: 'MARKET',
               price: livePrice,
-              amount: bot.positionQty || parseFloat((bot.allocatedCapitalUsdt / livePrice).toFixed(4)),
-              totalUsdt: bot.allocatedCapitalUsdt,
+              amount: bot.positionQty!,
+              totalUsdt: bot.positionQty! * bot.entryPrice!,
               status: 'FILLED',
               pnl: rawProfitUsdt,
               pnlPercent: parseFloat(finalPnlPct.toFixed(2)),
@@ -1549,42 +1512,17 @@ export default function App() {
               timestamp: now,
               executionSource: 'BOT',
               botName: bot.name,
-              takeProfitPrice: parseFloat((livePrice * 1.03).toFixed(2)),
-              stopLossPrice: parseFloat((livePrice * 0.98).toFixed(2))
+              takeProfitPrice: exit.takeProfitPrice,
+              stopLossPrice: exit.stopPrice
             };
             return [closedOrder, ...updated.filter(o => o.id !== closedOrder.id).slice(0, 99)];
           }
           return updated;
         });
 
-        // Update simulated balance in Paper mode with Net Profit
-        if (!isLive) {
-          setSettings(prev => ({
-            ...prev,
-            simulatedBalanceUsdt: parseFloat((prev.simulatedBalanceUsdt + netProfitUsdt).toFixed(2))
-          }));
-        } else {
-          // In Live mode, return actual position capital + profit to available cash, strictly clamped to vault
-          setSettings(prev => {
-            const vault = prev.liveSpotBalanceUsdt || 39.50;
-            const returnedCapital = Math.min(14.0, bot.allocatedCapitalUsdt || 10.0);
-            const currentCash = Math.min(vault, prev.availableCashUsdt !== undefined ? prev.availableCashUsdt : 3.04);
-            const updatedCash = Math.min(vault, parseFloat((currentCash + returnedCapital + netProfitUsdt).toFixed(2)));
-            return {
-              ...prev,
-              availableCashUsdt: updatedCash,
-              totalFeesSavedBnbDiscountUsdt: hasBnbFeeDiscount
-                ? parseFloat(((prev.totalFeesSavedBnbDiscountUsdt || 0) + (binanceFeeUsdt * 0.25)).toFixed(3))
-                : prev.totalFeesSavedBnbDiscountUsdt
-            };
-          });
-        }
-
-        // Reinvest 100% of positive profit into compounding bot capital, capped at max single token limit (14 USDT)
-        const reinvestRate = (currentSet.compoundReinvestmentRate !== undefined ? currentSet.compoundReinvestmentRate : 100) / 100;
-        const compoundedCapital = isWin && netProfitUsdt > 0
-          ? Math.min(14.0, parseFloat((bot.allocatedCapitalUsdt + (netProfitUsdt * reinvestRate)).toFixed(2)))
-          : Math.min(14.0, bot.allocatedCapitalUsdt);
+        setSettings(prev=>({...prev,simulatedBalanceUsdt:parseFloat((prev.simulatedBalanceUsdt+netProfitUsdt).toFixed(8))}));
+        const reinvestRate=Math.max(0,Math.min(100,currentSet.compoundReinvestmentRate??100))/100;
+        const compoundedCapital=Math.max(0,bot.allocatedCapitalUsdt+netProfitUsdt*(isWin?reinvestRate:1));
 
         // Update bot state: clear position and reset to SCANNER so it hunts the next top gainer!
         setBots(prev => prev.map(b => b.id === bot.id ? {
@@ -1593,13 +1531,15 @@ export default function App() {
           hasOpenPosition: false,
           allocatedCapitalUsdt: compoundedCapital,
           entryPrice: undefined,
+          highestPriceSinceEntry: undefined,
+          positionOrderId: undefined,
           positionQty: undefined,
           positionOpenedAt: undefined,
           tradesCount: newTradesCount,
           winRate: newWinRate,
           totalProfitUsdt: newTotalProfit,
           totalProfitPercent: newTotalPercent,
-          currentCapitalUsdt: parseFloat((compoundedCapital + newTotalProfit).toFixed(2)),
+          currentCapitalUsdt: parseFloat(compoundedCapital.toFixed(8)),
           lastSignal: 'SELL',
           lastAction: actionMsg
         } : b));
@@ -1607,58 +1547,18 @@ export default function App() {
         addStrategyLog({
           botName: bot.name,
           symbol: bot.symbol,
-          type: isWin ? 'TAKE_PROFIT' : 'STOP_LOSS',
-          message: `${actionMsg}. Net Kazanç: ${netProfitUsdt >= 0 ? '+' : ''}$${netProfitUsdt.toFixed(2)} USDT`,
+          type: exit.reason,
+          message: `${actionMsg}. Simüle Net Sonuç: ${netProfitUsdt >= 0 ? '+' : ''}$${netProfitUsdt.toFixed(2)} USDT`,
           pnl: netProfitUsdt,
           pnlPercent: netPnlPct
         });
 
-        // LIVE BINANCE SELL EXECUTION WITH ZERO LOSS ENFORCEMENT
-        if (isLive && currentSet.autoLiveExecutionEnabled && currentSet.binanceApiKey && currentSet.binanceSecretKey) {
-          const liveTradeSize = currentSet.liveTradeAmountUsdt || 15.0;
-          const sellQty = bot.positionQty ? bot.positionQty.toString() : (livePrice > 0 ? (liveTradeSize / livePrice).toFixed(4) : undefined);
-          fetch('/api/binance/order', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              apiKey: currentSet.binanceApiKey,
-              secretKey: currentSet.binanceSecretKey,
-              exchange: currentSet.exchange || 'BINANCE',
-              symbol: bot.symbol,
-              side: 'SELL',
-              type: 'MARKET',
-              quantity: sellQty,
-              allowLoss: false // SIFIR KAYIP ŞARTI: Borsa seviyesinde koruma
-            })
-          }).then(r => r.json()).then(resData => {
-            if (resData.success) {
-              addNotification({
-                type: 'TAKE_PROFIT',
-                title: `⚡ ${bot.name}: Canlı Binance Net Kâr Satışı Onaylandı`,
-                message: `${bot.symbol} için net kâr satışı borsa tarafından onaylandı. (Emir No: ${resData.orderId || '-'})`,
-                symbol: bot.symbol
-              });
-            } else {
-              const nowTime = Date.now();
-              if (nowTime - lastLiveErrorNotifyRef.current > 25000) {
-                lastLiveErrorNotifyRef.current = nowTime;
-                addNotification({
-                  type: 'SYSTEM',
-                  title: `🛡️ Sıfır Kayıp Kalkanı (${bot.symbol})`,
-                  message: `${resData.error || 'Borsa satış emri reddetti'}`,
-                  symbol: bot.symbol
-                });
-              }
-            }
-          }).catch(() => {});
-        }
-
-        soundManager.playProfitChime();
+        if(isWin)soundManager.playProfitChime();
 
         addNotification({
-          type: 'TAKE_PROFIT',
-          title: `🎯 ${bot.name}: Gün İçi Net Kâr Alındı`,
-          message: `${bot.symbol} ${actionMsg}. Net Kazanç: +$${netProfitUsdt.toFixed(2)} USDT`,
+          type: exit.reason,
+          title: `${bot.name}: Simüle ${exit.reason==='STOP_LOSS'?'Stop':'Kâr Hedefi'}`,
+          message: `${bot.symbol} ${actionMsg}. Simüle Net Sonuç: $${netProfitUsdt.toFixed(4)} USDT`,
           symbol: bot.symbol
         });
       }

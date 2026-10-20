@@ -41,9 +41,9 @@ The command may initialize an empty capital journal for a new account, reconcile
 
 ## Remaining requirements before submission can be exposed
 
-New testnet submissions now require bounded LIMIT IOC intents. BUY funding must cover the upward-rounded limit price times full quantity plus separate fee reserves. The exchange limit bounds BUY gross principal; it does not guarantee a fill or bound all fee costs. Common symbol filters, fresh-book slippage/spread checks, per-order notional/position ceilings and an explicit server policy are integrated; see TRADING_RULES.md. Unsupported exchange reference-price bands block submission. The current composition must not be enabled as an unattended trading engine.
+New testnet submissions now require bounded LIMIT IOC intents. BUY funding must cover the upward-rounded limit price times full quantity plus separate fee reserves. The exchange limit bounds BUY gross principal; it does not guarantee a fill or bound all fee costs. Common symbol filters, fresh-book slippage/spread checks, per-order notional/position ceilings and an explicit server policy are integrated; see TRADING_RULES.md. Exchange percentage bands now require a fresh authoritative reference or an explicitly justified matching-window fallback; missing/invalid references still block submission. New sends also require complete daily risk evidence, whose real provider is not yet supplied. The current composition must not be enabled as an unattended trading engine.
 
-Other remaining work: daily loss/position limits, emergency halt and stop behavior, server worker lifecycle, persistent/shared rate limits, robust streaming reconciliation, trade history/cost basis, reproducible paper accounting and real provider integration validation. The existing browser strategy's loss-prevention logic is still pending repair.
+Other remaining work: full daily account-history/valuation evidence, native protective stop/cancel behavior, server worker lifecycle, persistent/shared rate limits, robust streaming reconciliation, trade history/cost basis, reproducible paper accounting and real provider integration validation. A persistent risk gate/halt and paper stop repairs are described in DAILY_RISK_AND_PAPER.md.
 
 ## Validation
 

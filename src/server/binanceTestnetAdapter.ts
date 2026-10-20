@@ -1,3 +1,4 @@
+import { referenceForFilter, type PriceReference } from './priceReference';
 import { validateTradeContext, type TradeContext } from './tradingRules';
 import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
 import { createHash, createHmac } from 'node:crypto';
@@ -39,7 +40,7 @@ export function createBinanceTestnetAdapter(options: {
     if (i.accountId !== accountId) throw Error('TESTNET_ACCOUNT_MISMATCH');
     if (!/^[A-Z0-9]{5,24}$/.test(i.symbol) || !['BUY','SELL'].includes(i.side) || !/^aq_[a-f0-9]{32}$/.test(clientId) || units(i.quantity) <= 0n) throw Error('INVALID_ORDER_REQUEST');
   }
-  async function request(method: 'GET'|'POST', endpoint: string, params: {[key:string]:string}, allowMissing = false, signedRequest = true): Promise<any> {
+  async function request(method: 'GET'|'POST', endpoint: string, params: {[key:string]:string}, allowMissing = false, signedRequest = true, missingReference = false): Promise<any> {
     const timestamp = now();
     if (timestamp < blockedUntil) throw Error('EXCHANGE_COOLDOWN');
     if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw Error('INVALID_CLOCK');
@@ -63,6 +64,7 @@ export function createBinanceTestnetAdapter(options: {
     try { body = await response.json(); } catch { throw Error('EXCHANGE_RESPONSE_UNKNOWN'); }
     // -2013 is only an absent order on the read query; never a reason to send again.
     if (allowMissing && response.status === 400 && body?.code === -2013) return null;
+    if(missingReference&&response.status===400&&body?.code===-2043)return {symbol:params.symbol,referencePrice:null};
     if (!response.ok || (typeof body?.code === 'number' && body.code < 0)) throw Error('EXCHANGE_REQUEST_UNCONFIRMED');
     return body;
   }
@@ -72,11 +74,36 @@ export function createBinanceTestnetAdapter(options: {
       const startedAt=now();
       const info=object(await request('GET','/api/v3/exchangeInfo',{symbol},false,false));
       if(!Array.isArray(info.symbols)||info.symbols.length!==1||info.symbols[0]?.symbol!==symbol)throw Error('INVALID_EXCHANGE_INFO');
-      const r=object(info.symbols[0]),quoteAt=now();
+      const r=object(info.symbols[0]);
+      if(!Array.isArray(r.filters))throw Error('INVALID_EXCHANGE_INFO');
+      const percent=r.filters.filter((f:any)=>['PERCENT_PRICE','PERCENT_PRICE_BY_SIDE'].includes(f?.filterType));
+      let reference:PriceReference|undefined;
+      if(percent.length){
+        const observedAt=now();
+        const raw=object(await request('GET','/api/v3/referencePrice',{symbol},false,false,true));
+        if(raw.symbol!==symbol||!('referencePrice' in raw))throw Error('REFERENCE_SYMBOL_MISMATCH');
+        if(raw.referencePrice!==null){reference={kind:'REFERENCE_PRICE',price:raw.referencePrice,observedAt,timestamp:raw.timestamp};}
+        else{
+          const windows=percent.map((f:any)=>f.avgPriceMins);
+          if(windows.some((v:any)=>!Number.isSafeInteger(v)||v<0||v!==windows[0]))throw Error('REFERENCE_WINDOW_MISMATCH');
+          const fallbackAt=now();
+          if(windows[0]===0){
+            const rows=await request('GET','/api/v3/trades',{symbol,limit:'1'},false,false);
+            if(!Array.isArray(rows)||rows.length!==1)throw Error('LAST_TRADE_UNAVAILABLE');
+            reference={kind:'LAST_TRADE',price:rows[0]?.price,timestamp:rows[0]?.time,observedAt:fallbackAt,absenceConfirmed:true};
+          }else{
+            const avg=object(await request('GET','/api/v3/avgPrice',{symbol},false,false));
+            reference={kind:'AVERAGE_PRICE',price:avg.price,timestamp:avg.closeTime,observedAt:fallbackAt,avgPriceMins:avg.mins,absenceConfirmed:true};
+          }
+        }
+      }
+      const quoteAt=now();
       const q=object(await request('GET','/api/v3/ticker/bookTicker',{symbol},false,false));
       if(q.symbol!==symbol)throw Error('BOOK_SYMBOL_MISMATCH');
-      const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
-      validateTradeContext(context,symbol,now());return context;
+      const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
+      validateTradeContext(context,symbol,now());
+      for(const filter of percent)referenceForFilter(reference,filter,now());
+      return context;
     },
     async accountSnapshot() {
       const startedAt = now();

@@ -28,12 +28,13 @@ Validated common filters:
 
 Malformed, duplicated, absent required or unknown relevant filters stop admission. Filters specific to market orders, iceberg/algo orders, trailing deltas or amendments are not applied because this sender cannot create those requests.
 
-PERCENT_PRICE and PERCENT_PRICE_BY_SIDE currently stop admission with EXCHANGE_REFERENCE_PRICE_REQUIRED. The exchange can use an authoritative reference price or a specific averaging window; a spot/book price is not a safe substitute. Many actual symbols may remain blocked for this reason. This limitation must be addressed and verified with the provider before calling the pilot connected/ready. Account/asset-specific trading restrictions and newly introduced rules still require provider integration coverage.
+PERCENT_PRICE and PERCENT_PRICE_BY_SIDE now use a non-null exchange reference price first. Only explicit null or documented -2043 absence permits a matching avgPriceMins average, or the latest trade for a zero-minute window. Reference request/event times must both be at most two seconds old. Failed/unsupported endpoints, unknown absence, mismatched windows and stale values still block admission; a book price is never substituted. Real provider compatibility and separate PRICE_RANGE execution rules still require validation before calling the pilot connected/ready. Account/asset-specific trading restrictions and newly introduced rules still require provider integration coverage.
 
 ## Basic server risk policy
 
 An explicit policy contains:
 - halted: rejects new admission, including when switched during an asynchronous lookup.
+- dailyLossLimitQuote: explicit USDT limit requiring complete trusted daily evidence; see DAILY_RISK_AND_PAPER.md. No real evidence provider is implemented yet, so the actual testnet adapter cannot authorize new funded sends.
 - Per-symbol maximum planned gross order notional (in quote asset) and maximum base position (in base units).
 - Maximum whole-account open orders.
 - Maximum spread and quote-relative slippage, in integer basis points. Spread is (ask-bid)/bid. BUY limit must be marketable and within the ask-relative ceiling; SELL limit must be marketable and within the bid-relative floor.
@@ -46,7 +47,7 @@ Caller intent and funding objects are copied before asynchronous lookups. Prefli
 
 ## Remaining work
 
-This is not complete risk management. Daily realized/unrealized-loss limits need truthful account valuation and historical accounting; stop-loss/protective-order lifecycle, durable emergency-halt controls, server worker operation, stream recovery, persistent rate limits and exchange reference-price rules remain outstanding. The legacy browser strategy and paper accounting still require repair. Do not remove the live guard because these unit tests pass.
+This is not complete risk management. A persistent daily-loss evidence gate and emergency halt now exist, but their real full-history/valuation evidence provider is still missing. Native protective stop/cancel lifecycle, server worker operation, stream recovery, persistent rate limits, separate execution-price rules and real provider validation remain outstanding. Paper stop/profit-only exit logic and automatic top-ups were repaired; unified paper accounting remains pending. See DAILY_RISK_AND_PAPER.md. Do not remove the live guard because these unit tests pass.
 
 ## Validation
 

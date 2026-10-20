@@ -1,18 +1,20 @@
+import { validatePercentPrice, type PriceReference } from './priceReference';
 import { units, decimal } from './exactDecimal';
 import { validateAccountSnapshot, type AccountSnapshot } from './accountSnapshot';
 import type { Intent } from './orderExecution';
 export type TradeContext = {
   environment:'BINANCE_TESTNET'; symbol:string; baseAsset:string; quoteAsset:string;
   status:string; spotAllowed:boolean; orderTypes:string[]; filters:any[]; exchangeFilters:any[];
-  startedAt:number; quote:{bid:string;ask:string;bidQty:string;askQty:string;observedAt:number};
+  reference?:PriceReference; startedAt:number; quote:{bid:string;ask:string;bidQty:string;askQty:string;observedAt:number};
 };
 export type RiskPolicy = {
-  halted:boolean; maxSpreadBps:number; maxSlippageBps:number; maxOpenOrders:number;
+  halted:boolean; dailyLossLimitQuote:string; maxSpreadBps:number; maxSlippageBps:number; maxOpenOrders:number;
   symbols:{[symbol:string]:{maxOrderNotional:string;maxBasePosition:string}};
 };
 export function assertPolicy(policy:RiskPolicy|undefined): asserts policy is RiskPolicy {
   if(!policy || typeof policy.halted!=='boolean' || !Number.isInteger(policy.maxSpreadBps) || policy.maxSpreadBps<0 || policy.maxSpreadBps>1000 || !Number.isInteger(policy.maxSlippageBps) || policy.maxSlippageBps<0 || policy.maxSlippageBps>1000 || !Number.isSafeInteger(policy.maxOpenOrders) || policy.maxOpenOrders<1 || !policy.symbols || typeof policy.symbols!=='object' || Array.isArray(policy.symbols))throw Error('RISK_POLICY_REQUIRED');
   for(const [symbol,limit] of Object.entries(policy.symbols))if(!/^[A-Z0-9]{5,24}$/.test(symbol)||!limit||units(limit.maxOrderNotional)<=0n||units(limit.maxBasePosition)<=0n)throw Error('INVALID_RISK_POLICY');
+  if(units(policy.dailyLossLimitQuote)<=0n)throw Error('INVALID_DAILY_LOSS_LIMIT');
   if(policy.halted)throw Error('RISK_HALTED');
 }
 const SCALE=10n**18n;
@@ -73,7 +75,7 @@ export function validateTrade(intent:Intent,c:TradeContext,account:AccountSnapsh
       case 'MAX_NUM_ORDERS': if(account.openOrders.filter(o=>o.symbol===intent.symbol).length+1>int(f.maxNumOrders))throw Error('EXCHANGE_ORDER_COUNT_EXCEEDED');break;
       // These do not apply: we submit only non-iceberg, non-algo LIMIT IOC with no amendment.
       case 'MARKET_LOT_SIZE': case 'ICEBERG_PARTS': case 'MAX_NUM_ICEBERG_ORDERS': case 'MAX_NUM_ALGO_ORDERS': case 'TRAILING_DELTA': case 'MAX_NUM_ORDER_AMENDS': break;
-      case 'PERCENT_PRICE': case 'PERCENT_PRICE_BY_SIDE': throw Error('EXCHANGE_REFERENCE_PRICE_REQUIRED');
+      case 'PERCENT_PRICE': case 'PERCENT_PRICE_BY_SIDE': validatePercentPrice(price,intent.side,f,c.reference,now);break;
       default: throw Error('UNSUPPORTED_SYMBOL_FILTER');
     }
   }

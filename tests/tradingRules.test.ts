@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { validateTrade, limitNotional, assertPolicy } from '../src/server/tradingRules';
 import { FundedExecution, type AccountAdapter } from '../src/server/fundedExecution';
-import { rulesFixture, policyFixture } from './fixtures/trading';
+import { rulesFixture, policyFixture, dailyEvidenceFixture } from './fixtures/trading';
 import type { Intent, Confirmation } from '../src/server/orderExecution';
 import type { AccountSnapshot } from '../src/server/accountSnapshot';
 const intent:Intent={requestId:'request_0001',accountId:'testnet_fixture',symbol:'BTCUSDT',side:'BUY',quantity:'2',limitPrice:'100'};
@@ -57,7 +57,7 @@ test('wrong/future market context and unsupported other-symbol pending exposure 
 });
 async function serviceTest(callback:(s:{engine:FundedExecution;posts:()=>number;adapter:AccountAdapter})=>Promise<void>,policy=policyFixture()){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aq-risk-'));let posts=0;
- const adapter:AccountAdapter={accountSnapshot:async()=>account(),tradeContext:async()=>rulesFixture(),submit:async(i,id)=>{posts++;return {clientOrderId:id,symbol:i.symbol,side:i.side,status:'NEW',orderId:'123',executedQty:'0',quoteQty:'0',updateTime:1002};},query:async()=>null};
+ const adapter:AccountAdapter={dailyRiskEvidence:async snapshot=>dailyEvidenceFixture(snapshot),accountSnapshot:async()=>account(),tradeContext:async()=>rulesFixture(),submit:async(i,id)=>{posts++;return {clientOrderId:id,symbol:i.symbol,side:i.side,status:'NEW',orderId:'123',executedQty:'0',quoteQty:'0',updateTime:1002};},query:async()=>null};
  const engine=new FundedExecution(path.join(dir,'orders'),path.join(dir,'capital'),intent.accountId,adapter,()=>1002,policy);
  try{await engine.refresh();await callback({engine,posts:()=>posts,adapter});}finally{engine.close();fs.rmSync(dir,{recursive:true,force:true});}
 }
@@ -86,4 +86,19 @@ test('halt toggled during price lookup prevents submission before reservation',a
 });
 test('configured open-order ceiling and missing holdings stop new risk',()=>{
  const a=account();a.openOrders.push({clientOrderId:'other',orderId:'9',symbol:'BTCUSDT',side:'SELL',status:'NEW',quantity:'1',executedQty:'0'});const p=policyFixture();p.maxOpenOrders=1;assert.throws(()=>run(intent,rulesFixture(),a,p),/OPEN_ORDER/);a.openOrders=[];a.balances=a.balances.filter(b=>b.asset!=='BTC');assert.throws(()=>run(intent,rulesFixture(),a),/POSITION_UNAVAILABLE/);
+});
+test('daily-risk evidence absence, loss latch and durable halt prevent new sends',async()=>{
+ await serviceTest(async s=>{delete s.adapter.dailyRiskEvidence;await assert.rejects(s.engine.submit(intent,funding),/DAILY_RISK_EVIDENCE_REQUIRED/);assert.equal(s.posts(),0);});
+ await serviceTest(async s=>{s.adapter.dailyRiskEvidence=async snap=>({...dailyEvidenceFixture(snap),currentEquity:'980'});await assert.rejects(s.engine.submit(intent,funding),/DAILY_LOSS/);assert.equal(s.posts(),0);await s.engine.refresh();s.adapter.dailyRiskEvidence=async snap=>dailyEvidenceFixture(snap);await assert.rejects(s.engine.submit(intent,funding),/DAILY_LOSS/);assert.equal(s.posts(),0);});
+ await serviceTest(async s=>{s.engine.emergencyHalt();await assert.rejects(s.engine.submit(intent,funding),/EMERGENCY_HALT/);assert.equal(s.posts(),0);});
+});
+test('a verified reducing sell remains possible after daily entry-loss latch',async()=>{
+ await serviceTest(async s=>{s.adapter.dailyRiskEvidence=async snap=>({...dailyEvidenceFixture(snap),currentEquity:'980'});await s.engine.submit({...intent,side:'SELL'},funding);assert.equal(s.posts(),1);});
+});
+test('percent-price limits use reference precedence and exact side-specific multipliers',()=>{
+ const c=rulesFixture();c.reference={kind:'REFERENCE_PRICE',price:'100',timestamp:1001,observedAt:1001};c.filters.push({filterType:'PERCENT_PRICE_BY_SIDE',avgPriceMins:5,bidMultiplierDown:'0.99',bidMultiplierUp:'1',askMultiplierDown:'0.99',askMultiplierUp:'0.999'});assert.doesNotThrow(()=>run(intent,c));assert.throws(()=>run({...intent,side:'SELL'},c),/PERCENT_PRICE/);
+ c.filters.pop();c.filters.push({filterType:'PERCENT_PRICE',avgPriceMins:5,multiplierDown:'1',multiplierUp:'1'});assert.doesNotThrow(()=>run(intent,c));c.reference.price='99.999999999999999999';assert.throws(()=>run(intent,c),/PERCENT_PRICE/);
+});
+test('fallback reference needs confirmed absence and matching window; stale data stays blocked',()=>{
+ const c=rulesFixture();c.filters.push({filterType:'PERCENT_PRICE',avgPriceMins:5,multiplierDown:'0.9',multiplierUp:'1.1'});c.reference={kind:'AVERAGE_PRICE',price:'100',timestamp:1001,observedAt:1001,avgPriceMins:5};assert.throws(()=>run(intent,c),/ABSENCE/);c.reference.absenceConfirmed=true;assert.doesNotThrow(()=>run(intent,c));c.reference.avgPriceMins=1;assert.throws(()=>run(intent,c),/WINDOW/);c.reference.timestamp=1;c.reference.observedAt=3001;c.quote.observedAt=3001;assert.throws(()=>run(intent,c,account(),policyFixture(),3002),/STALE_REFERENCE/);
 });

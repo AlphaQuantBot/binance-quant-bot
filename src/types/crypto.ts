@@ -71,6 +71,7 @@ export interface BotInstance {
   highestPriceSinceEntry?: number;
   hasOpenPosition?: boolean;
   positionQty?: number;
+  positionOrderId?: string;
   positionOpenedAt?: number;
   createdAt: number;
   lastAction: string;
@@ -251,3 +252,4 @@ export interface StrategyLogItem {
   pnl?: number;
   pnlPercent?: number;
 }
+
