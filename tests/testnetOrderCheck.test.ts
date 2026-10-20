@@ -33,3 +33,22 @@ test('adapter validation signs exactly one fixed testnet order/test POST, not an
 test('validation errors/timeouts/malformed responses do not retry or fall back to matching engine',async()=>{
  for(const mode of ['timeout','badjson','unexpected','429']){let calls=0;const p=plan();const a=createBinanceTestnetAdapter({apiKey:key,secretKey:secret,now:()=>1002,fetcher:async url=>{calls++;assert.equal(String(url),'https://testnet.binance.vision/api/v3/order/test');if(mode==='timeout')throw Error('private data');return new Response(mode==='badjson'?'bad':mode==='unexpected'?'{"orderId":1}':'{}',{status:mode==='429'?429:200});}});await assert.rejects(a.validateTestOrder(p.intent,p.clientOrderId));assert.equal(calls,1);}
 });
+
+
+test('operator-observed BTCUSDT filter set supports standalone validation without relaxing price or quantity rules',()=>{
+ const context=rulesFixture();context.filters=[
+ {filterType:'PRICE_FILTER',minPrice:'0.01000000',maxPrice:'1000000.00000000',tickSize:'0.01000000'},
+ {filterType:'LOT_SIZE',minQty:'0.00001000',maxQty:'9000.00000000',stepSize:'0.00001000'},
+ {filterType:'ICEBERG_PARTS',limit:100},
+ {filterType:'MARKET_LOT_SIZE',minQty:'0.00000000',maxQty:'133.97193096',stepSize:'0.00000000'},
+ {filterType:'TRAILING_DELTA',minTrailingAboveDelta:10,maxTrailingAboveDelta:2000,minTrailingBelowDelta:10,maxTrailingBelowDelta:2000},
+ {filterType:'PERCENT_PRICE_BY_SIDE',bidMultiplierUp:'1.2',bidMultiplierDown:'0.5',askMultiplierUp:'2',askMultiplierDown:'0.8',avgPriceMins:5},
+ {filterType:'NOTIONAL',minNotional:'5.00000000',applyMinToMarket:true,maxNotional:'9000000.00000000',applyMaxToMarket:false,avgPriceMins:5},
+ {filterType:'MAX_NUM_ORDERS',maxNumOrders:200},
+ {filterType:'MAX_NUM_ORDER_LISTS',maxNumOrderLists:20},
+ {filterType:'MAX_NUM_ALGO_ORDERS',maxNumAlgoOrders:5},
+ {filterType:'MAX_NUM_ORDER_AMENDS',maxNumOrderAmends:10}];
+ context.reference={kind:'REFERENCE_PRICE',price:'100',timestamp:1001,observedAt:1000};
+ const p=planTestnetOrderCheck(snapshot(),context,commission(),1002);assert.equal(p.principalUSDT,'25');assert.equal(p.tradingEnabled,false);
+ context.filters.find(f=>f.filterType==='NOTIONAL')!.minNotional='26';assert.throws(()=>planTestnetOrderCheck(snapshot(),context,commission(),1002),/NOTIONAL_REJECTED/);
+});

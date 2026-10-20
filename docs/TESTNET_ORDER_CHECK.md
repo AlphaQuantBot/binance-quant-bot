@@ -76,3 +76,21 @@ average substitution, fabricated timestamp or increase in freshness limits.
 A null/mismatched refreshed reference blocks explicitly. Future timestamps and
 slow requests do not qualify. Actual operator validation still pending.
 Local validation: 244 tests, TypeScript and production build passed.
+
+## Operator-observed order-list count filter
+
+Operator on 4722cb3 reached UNSUPPORTED_SYMBOL_FILTER and supplied the actual
+BTCUSDT exchangeInfo filter set. MAX_NUM_ORDER_LISTS was the unsupported filter.
+Official Binance filters.md defines it as the maximum open order lists per
+symbol, with EXCHANGE_MAX_NUM_ORDER_LISTS covering exchange-wide lists:
+https://github.com/binance/binance-spot-api-docs/blob/master/filters.md#max_num_order_lists
+
+The existing submission path creates a standalone LIMIT IOC order, not an order
+list. Recognize these two filters, validate maxNumOrderLists as a nonnegative
+safe integer, and add zero lists. No OCO/OTO/OTOCO or other list capability is
+introduced. All unknown applicable filters still block. Price, lot, percent,
+notional, normal order counts and position rules remain enforced. Tests include
+the entire supplied BTCUSDT symbol filter set and malformed limit rejection.
+Local validation: 246 tests, TypeScript and production build passed. Actual
+operator order-check after this change remains pending; no matching-engine
+order has been created by these checks.

@@ -73,6 +73,8 @@ export function validateTrade(intent:Intent,c:TradeContext,account:AccountSnapsh
       case 'NOTIONAL': if(notional<units(f.minNotional)*SCALE||notional>units(f.maxNotional)*SCALE)throw Error('NOTIONAL_REJECTED');break;
       case 'MAX_POSITION': if(intent.side==='BUY'&&resulting>units(f.maxPosition))throw Error('EXCHANGE_POSITION_LIMIT_EXCEEDED');break;
       case 'MAX_NUM_ORDERS': if(account.openOrders.filter(o=>o.symbol===intent.symbol).length+1>int(f.maxNumOrders))throw Error('EXCHANGE_ORDER_COUNT_EXCEEDED');break;
+      // A standalone LIMIT IOC creates no order list; validate metadata, add zero lists.
+      case 'MAX_NUM_ORDER_LISTS': int(f.maxNumOrderLists);break;
       // These do not apply: we submit only non-iceberg, non-algo LIMIT IOC with no amendment.
       case 'MARKET_LOT_SIZE': case 'ICEBERG_PARTS': case 'MAX_NUM_ICEBERG_ORDERS': case 'MAX_NUM_ALGO_ORDERS': case 'TRAILING_DELTA': case 'MAX_NUM_ORDER_AMENDS': break;
       case 'PERCENT_PRICE': case 'PERCENT_PRICE_BY_SIDE': validatePercentPrice(price,intent.side,f,c.reference,now);break;
@@ -82,6 +84,7 @@ export function validateTrade(intent:Intent,c:TradeContext,account:AccountSnapsh
   if(!seen.has('PRICE_FILTER')||!seen.has('LOT_SIZE')||(!seen.has('MIN_NOTIONAL')&&!seen.has('NOTIONAL')))throw Error('REQUIRED_SYMBOL_FILTER_MISSING');
   for(const f of c.exchangeFilters){
     if(f?.filterType==='EXCHANGE_MAX_NUM_ORDERS'){if(account.openOrders.length+1>int(f.maxNumOrders))throw Error('EXCHANGE_ORDER_COUNT_EXCEEDED');}
+    else if(f?.filterType==='EXCHANGE_MAX_NUM_ORDER_LISTS'){int(f.maxNumOrderLists);}
     else if(!['EXCHANGE_MAX_NUM_ALGO_ORDERS','EXCHANGE_MAX_NUM_ICEBERG_ORDERS'].includes(f?.filterType))throw Error('UNSUPPORTED_EXCHANGE_FILTER');
   }
   return {baseAsset:c.baseAsset,quoteAsset:c.quoteAsset,maximumBuyPrincipal:limitNotional(intent)};

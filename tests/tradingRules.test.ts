@@ -102,3 +102,13 @@ test('percent-price limits use reference precedence and exact side-specific mult
 test('fallback reference needs confirmed absence and matching window; stale data stays blocked',()=>{
  const c=rulesFixture();c.filters.push({filterType:'PERCENT_PRICE',avgPriceMins:5,multiplierDown:'0.9',multiplierUp:'1.1'});c.reference={kind:'AVERAGE_PRICE',price:'100',timestamp:1001,observedAt:1001,avgPriceMins:5};assert.throws(()=>run(intent,c),/ABSENCE/);c.reference.absenceConfirmed=true;assert.doesNotThrow(()=>run(intent,c));c.reference.avgPriceMins=1;assert.throws(()=>run(intent,c),/WINDOW/);c.reference.timestamp=1;c.reference.observedAt=3001;c.quote.observedAt=3001;assert.throws(()=>run(intent,c,account(),policyFixture(),3002),/STALE_REFERENCE/);
 });
+
+
+test('standalone LIMIT IOC adds no symbol/exchange order lists, with validated limit metadata',()=>{
+ for(const limit of [0,20]){const c=rulesFixture();c.filters.push({filterType:'MAX_NUM_ORDER_LISTS',maxNumOrderLists:limit});c.exchangeFilters=[{filterType:'EXCHANGE_MAX_NUM_ORDER_LISTS',maxNumOrderLists:limit}];assert.equal(run(intent,c).maximumBuyPrincipal,'200');}
+ for(const limit of [undefined,-1,1.5,'20',NaN])for(const scope of ['symbol','exchange']){
+ const c=rulesFixture();const f={filterType:scope==='symbol'?'MAX_NUM_ORDER_LISTS':'EXCHANGE_MAX_NUM_ORDER_LISTS',maxNumOrderLists:limit};
+ if(scope==='symbol')c.filters.push(f);else c.exchangeFilters=[f];assert.throws(()=>run(intent,c),/INVALID_FILTER_LIMIT/);
+ }
+ const c=rulesFixture();c.filters.push({filterType:'MAX_NUM_ORDER_LISTS',maxNumOrderLists:20},{filterType:'UNKNOWN_NEW_FILTER'});assert.throws(()=>run(intent,c),/UNSUPPORTED_SYMBOL_FILTER/);
+});
