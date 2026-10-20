@@ -20,3 +20,5 @@ coverage/
 .server_credentials.enc.*.tmp
 
 .order_journal.json*
+
+.testnet_order_journal.json*

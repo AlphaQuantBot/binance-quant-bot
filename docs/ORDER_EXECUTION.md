@@ -16,7 +16,7 @@ This change removes the three unreachable legacy mutation handlers from server.t
 
 Use one process and a local durable filesystem supporting exclusive create, atomic rename and fsync. This is not a distributed lock or a multi-user database. Never delete a stale lock without first proving the old process is stopped. Never delete/restore an old journal to permit retry: an exchange order may already exist. Backups and testnet resets require manual reconciliation. requestId retention must span restarts; generation/ownership will belong to the future server worker, not the browser.
 
-The adapter interface requires single-attempt submission; no production adapter is supplied. A future adapter must handle Binance statuses, safe order-ID parsing, symbol filters, account binding and signed read queries. Generic rejection payloads currently conservatively become UNKNOWN until queried. Fee/trade reconciliation, reservation of funds, complete startup account reconciliation, user-data stream integration and portfolio risk controls remain required before enabling any real orders. Only base-quantity intents are modeled here; quote-amount buys and limit/stop/cancel requests are not implemented.
+The adapter interface requires single-attempt submission; no production adapter is supplied. A separate testnet-only adapter now handles status/ID validation, account binding and signed queries; see TESTNET_RECONCILIATION.md. Dynamic symbol filters and risk controls remain outstanding. Generic rejection payloads currently conservatively become UNKNOWN until queried. Verified trade and native-asset fee snapshots can now be stored, but reservation of funds, complete startup account reconciliation, user-data stream integration and portfolio risk controls remain required before enabling any real orders. Only base-quantity intents are modeled here; quote-amount buys and limit/stop/cancel requests are not implemented.
 
 ## Validation
 
@@ -30,4 +30,4 @@ Fixtures cover lost replies, concurrent duplicate requests, changed intent confl
 
 ## Next priority
 
-Complete the adapter/confirmed trade and fee reconciliation, account startup reconciliation and capital reservations first. Then implement server-enforced risk limits and the server worker. The browser's legacy loss-prevention strategy and paper accounting have not been repaired by this change.
+Testnet-only adapter and fixture-tested order/trade/fee verification are implemented, with a read-only operator command. Complete provider integration validation, account startup reconciliation and capital reservations next. Then implement server-enforced risk limits and the server worker. The browser's legacy loss-prevention strategy and paper accounting have not been repaired by this change.

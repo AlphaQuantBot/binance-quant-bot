@@ -1,17 +1,15 @@
+import { units as amount } from './exactDecimal';
+import { validateSettlement, type Settlement } from './tradeSettlement';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 export type Status = 'SUBMITTING'|'UNKNOWN'|'NEW'|'PARTIALLY_FILLED'|'FILLED'|'CANCELED'|'REJECTED'|'EXPIRED'|'EXPIRED_IN_MATCH';
 export type Intent = {requestId:string; accountId:string; symbol:string; side:'BUY'|'SELL'; quantity:string};
-export type Confirmation = {clientOrderId:string; symbol:string; side:'BUY'|'SELL'; status:Status; orderId:string; executedQty:string; quoteQty:string; updateTime:number};
+export type Confirmation = {clientOrderId:string; symbol:string; side:'BUY'|'SELL'; status:Status; orderId:string; executedQty:string; quoteQty:string; updateTime:number; settlement?:Settlement};
 export type Record = Intent & {clientOrderId:string; status:Status; confirmation?:Confirmation};
 export interface Adapter { submit(intent:Intent, clientId:string):Promise<Confirmation>; query(intent:Intent, clientId:string):Promise<Confirmation|null> }
 const states = ['NEW','PARTIALLY_FILLED','FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
 const terminal = ['FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
-function amount(s:string):bigint {
-  if(typeof s !== 'string' || !/^(0|[1-9]\d{0,24})(\.\d{1,18})?$/.test(s)) throw Error('INVALID_DECIMAL');
-  const [w,f='']=s.split('.');return BigInt(w+f.padEnd(18,'0'));
-}
 function validate(i:Intent) {
   if(!/^[\w-]{8,80}$/.test(i.requestId)||!/^[\w-]{1,80}$/.test(i.accountId)||!/^[A-Z0-9]{5,24}$/.test(i.symbol)||!['BUY','SELL'].includes(i.side)||amount(i.quantity)<=0n)throw Error('INVALID_INTENT');
 }
@@ -48,6 +46,7 @@ export class OrderExecution {
   list(){this.open();return structuredClone(this.rows);}
   private check(r:Record,e:Confirmation){
     if(!e||e.clientOrderId!==r.clientOrderId||e.symbol!==r.symbol||e.side!==r.side||!states.includes(e.status)||typeof e.orderId!=='string'||!/^\d{1,30}$/.test(e.orderId)||!Number.isSafeInteger(e.updateTime)||e.updateTime<0)throw Error('INVALID_CONFIRMATION');
+    if(e.settlement)validateSettlement(e,e.settlement);
     const qty=amount(e.executedQty),quote=amount(e.quoteQty),requested=amount(r.quantity);
     if(qty>requested||(qty===0n)!==(quote===0n)||(['NEW','REJECTED'].includes(e.status)&&qty!==0n)||(e.status==='PARTIALLY_FILLED'&&(qty<=0n||qty>=requested))||(e.status==='FILLED'&&qty!==requested))throw Error('INVALID_TOTALS');
   }
@@ -58,6 +57,10 @@ export class OrderExecution {
       if(e.updateTime<prev.updateTime)return;
       if(amount(e.executedQty)<amount(prev.executedQty)||amount(e.quoteQty)<amount(prev.quoteQty))throw Error('TOTALS_REGRESSED');
       if(terminal.includes(prev.status)&&(prev.status!==e.status||amount(prev.executedQty)!==amount(e.executedQty)||amount(prev.quoteQty)!==amount(e.quoteQty)))throw Error('TERMINAL_CHANGED');
+      if(prev.settlement){
+        if(!e.settlement)throw Error('SETTLEMENT_MISSING');
+        for(const t of prev.settlement.trades){const next=e.settlement.trades.find(n=>n.tradeId===t.tradeId);if(!next||JSON.stringify(t)!==JSON.stringify(next))throw Error('SETTLED_TRADE_CHANGED');}
+      }
       if(prev.status==='PARTIALLY_FILLED'&&e.status==='NEW')throw Error('STATUS_REGRESSED');
     }
     r.confirmation=structuredClone(e);r.status=e.status;this.persist();

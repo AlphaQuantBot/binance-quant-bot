@@ -11,7 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:execution-safety": "node --import tsx --test tests/executionSafety.test.ts",
-    "test:security": "node --import tsx --test tests/*.test.ts"
+    "test:security": "node --import tsx --test tests/*.test.ts",
+    "testnet:reconcile": "node --import tsx scripts/reconcile_testnet_orders.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
