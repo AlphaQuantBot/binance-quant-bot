@@ -1,3 +1,4 @@
+import {backfillTrades,type TradeHistoryWindow} from './tradeBackfill';
 import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
 import { referenceForFilter, type PriceReference } from './priceReference';
 import { validateTradeContext, type TradeContext } from './tradingRules';
@@ -32,7 +33,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot> } {
+}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -72,6 +73,9 @@ export function createBinanceTestnetAdapter(options: {
     return body;
   }
   return {
+    async tradeHistory(symbol,startTime,endTime){
+      return backfillTrades(params=>request('GET','/api/v3/myTrades',params),accountId,symbol,startTime,endTime,now);
+    },
     async commissionRates(symbol) {
       if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
       const startedAt=now();
