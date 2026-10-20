@@ -18,3 +18,5 @@ coverage/
 
 .server_credentials.enc
 .server_credentials.enc.*.tmp
+
+.order_journal.json*
