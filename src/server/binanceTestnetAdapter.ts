@@ -127,7 +127,10 @@ export function createBinanceTestnetAdapter(options: {
       const startedAt = now();
       async function readAccount() {
         const raw = object(await request('GET', '/api/v3/account', {omitZeroBalances:'false'}));
-        if (typeof raw.canTrade !== 'boolean' || raw.accountType !== 'SPOT' || !Array.isArray(raw.permissions) || !raw.permissions.includes('SPOT')) throw Error('INVALID_SPOT_ACCOUNT');
+        if(typeof raw.canTrade!=='boolean')throw Error('ACCOUNT_CAN_TRADE_INVALID');
+        if(raw.accountType!=='SPOT')throw Error('ACCOUNT_TYPE_UNSUPPORTED');
+        if(!Array.isArray(raw.permissions))throw Error('ACCOUNT_PERMISSIONS_MISSING');
+        if(!raw.permissions.includes('SPOT'))throw Error('ACCOUNT_SPOT_PERMISSION_MISSING');
         return {canTrade:raw.canTrade, balances:normalizeBalances(raw.balances)};
       }
       async function readOrders(): Promise<OpenOrder[]> {

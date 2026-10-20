@@ -85,3 +85,22 @@ preflight success does not bypass the still-incomplete trading/risk gates.
 Local regression validation after these diagnostic changes: **208 fixture tests
 passed**, TypeScript and production build passed. This is separate from the
 blocked actual-network result above.
+
+## Operator-run Windows follow-up
+
+The operator subsequently ran the actual preflight on their own Windows runtime.
+Public ping, time and BTCUSDT exchangeInfo returned HTTP 200/PASS. After independent
+testnet keys were privately configured, credentialsConfigured became true, but the
+account check failed with AUTHENTICATED_READ_UNCONFIRMED and commission was skipped.
+This is evidence of public connectivity and a failed account check, not proof of
+invalid keys or successful authenticated account validation. No exchange write ran.
+
+The former preflight collapsed account-schema/consistency failures into a generic
+code. It now exposes only allowlisted internal diagnostic codes, including missing
+SPOT metadata, malformed decimal/balance data and changing snapshots. Account
+field checks are distinguished without weakening validation. Raw response bodies,
+keys, account balances and arbitrary exception text remain excluded from the
+report. The operator must pull this update and rerun preflight in the same keyed
+PowerShell session before diagnosing the root cause. Local regression: 210 fixture
+tests, TypeScript and production build passed. The account failure is unresolved
+until the updated actual output is collected.
