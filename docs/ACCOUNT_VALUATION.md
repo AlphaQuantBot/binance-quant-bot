@@ -1,15 +1,16 @@
 # Read-only current account valuation
 
 `npm run testnet:valuation` uses the independent APP_TESTNET_API_KEY and
-APP_TESTNET_SECRET_KEY. It reads a consistent account snapshot, fetches current
+APP_TESTNET_SECRET_KEY. It reads a consistent account snapshot, fetches
 a bulk exchangeInfo market catalogue and a bulk bookTicker snapshot for nonzero
-assets on their direct asset/USDT markets, and reads
+assets on their direct asset/USDT or inverse USDT/asset markets, and reads
 the account again. The CLI receives read capabilities only, without submit/cancel.
 
-Free plus locked balances are marked exactly at the current bid. USDT is the unit
+Free plus locked balances are marked exactly at the direct bid or inverse ask. USDT is the unit
 of account with price one; no other stablecoin is assumed pegged. Other assets
-require a direct, tradable Spot Testnet USDT market with fresh verified bid data.
-Indirect conversion and unsupported markets are unpriced, never valued at zero.
+require a tradable Spot Testnet USDT market with fresh verified book data.
+Direct asset/USDT conversion uses bid; inverse USDT/asset conversion buys USDT
+at ask. Multi-hop conversion and unsupported markets remain unpriced, never zero.
 Zero holdings need no price query. The actual adapter now uses exactly two public
 GETs for batch market/quote collection, with bounded arrays of at most 10,000
 markets/quotes. It validates market identities, tradable Spot metadata, positive
@@ -27,7 +28,7 @@ places. A single unpriced/stale asset or changing account makes
 `currentEquityUSDT:null` and the CLI exits nonzero. Per-asset diagnostics remain
 available, but a partial sum is never presented as whole-account equity.
 
-These are bid marks, not guaranteed liquidation proceeds: depth, slippage,
+These are book-price marks, not guaranteed liquidation proceeds: depth, slippage,
 liquidation fees and executable lot sizes are not modelled. Bulk bookTicker
 provides no exchange event time; freshness measures local request/receipt age,
 not guaranteed exchange-side event age. Sequential REST reads
@@ -69,8 +70,28 @@ Unicode/numeric test assets. Names alone do not establish the reason.
 
 Use `npm.cmd run testnet:valuation-diagnostics -- ASSET1 ASSET2` to distinguish
 missing/inactive direct USDT markets, absent/zero/malformed/crossed books, and
-available inverse market metadata. This command uses two bounded public GETs,
-requires no API keys, never places orders, and never treats an inverse market
-as a validated conversion price. It reports no balances or raw book values.
+available inverse market metadata. This diagnostic command uses two bounded public GETs,
+requires no API keys, never places orders, and never treats inverse metadata alone
+as a validated conversion price; the valuation reader separately validates books. It reports no balances or raw book values.
 A later live snapshot may differ from the original valuation. Missing prices
 continue to block total equity and daily risk authorization.
+
+
+## Inverse USDT market coverage
+
+Operator diagnostics found ten unpriced holdings with a tradable inverse market:
+AED, ARS, BRL, COP, IDR, KZT, MXN, TRY, USD, ZAR. BONK/BTTC/PEPE returned zero
+book prices; 456, JPY, THB and the Unicode test asset had no direct/inverse USDT
+market metadata. These observations do not by themselves validate any price.
+
+Batch valuation now supports an inverse USDT/asset market when its metadata and
+positive, non-crossed, nonempty book validate. To sell the held quote asset for
+USDT, divide its full free+locked quantity by the inverse ask. Fixed-point integer
+math floors only the final value, avoiding a rounded reciprocal multiplied by
+quantity. The displayed per-unit reciprocal is rounded down separately and is
+not used to calculate the value. Source SPOT_INVERSE_ASK retains conversion
+symbol/ask. A valid direct bid remains preferred, independent of response order.
+No extra API request is needed; freshness and unchanged-account gates remain.
+The CLI reports inversePricedAssetCount. Zero prices, absent markets, and missing
+quotes still block full-account equity. No stablecoin/fiat peg is assumed. The
+change does not enable trading or daily risk authorization. Actual rerun needed.

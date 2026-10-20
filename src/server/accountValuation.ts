@@ -37,7 +37,17 @@ export async function valueAccount(reader:Reader,accountId:string,now=Date.now){
   const quantity=units(b.free)+units(b.locked);
   if(b.asset==='USDT'){total+=quantity;return {asset:b.asset,quantity:decimal(quantity),priceUSDT:'1',valueUSDT:decimal(quantity),source:'QUOTE_UNIT' as const};}
   const mark=batchMarks.get(b.asset);
-  if(mark){try{validateValuationMark(mark,b.asset,observedAt);const value=quantity*units(mark.bid)/(10n**18n);total+=value;return {asset:b.asset,quantity:decimal(quantity),priceUSDT:mark.bid,valueUSDT:decimal(value),source:'SPOT_BID' as const,priceObservedAt:mark.observedAt};}catch{issues.push('STALE_PRICE:'+b.asset);}}
+  if(mark){try{
+   validateValuationMark(mark,b.asset,observedAt);
+   // Buying USDT with the held quote asset consumes the inverse market ask.
+   // Divide the full quantity directly, avoiding an intermediate rounded reciprocal.
+   if(mark.route==='INVERSE_ASK'){
+    const ask=units(mark.ask),value=quantity*(10n**18n)/ask;total+=value;
+    return {asset:b.asset,quantity:decimal(quantity),priceUSDT:decimal((10n**36n)/ask),valueUSDT:decimal(value),source:'SPOT_INVERSE_ASK' as const,conversionSymbol:mark.symbol,conversionAsk:mark.ask,priceObservedAt:mark.observedAt};
+   }
+   const value=quantity*units(mark.bid)/(10n**18n);total+=value;
+   return {asset:b.asset,quantity:decimal(quantity),priceUSDT:mark.bid,valueUSDT:decimal(value),source:'SPOT_BID' as const,priceObservedAt:mark.observedAt};
+  }catch{issues.push('STALE_PRICE:'+b.asset);}}
   const c=marks.get(b.asset);
   if(c){try{validateTradeContext(c,b.asset+'USDT',observedAt);}catch{issues.push('STALE_PRICE:'+b.asset);marks.delete(b.asset);}}
   if(!marks.has(b.asset)||!c)return {asset:b.asset,quantity:decimal(quantity),priceUSDT:null,valueUSDT:null,source:'UNPRICED' as const};
