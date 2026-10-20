@@ -42,3 +42,32 @@ test('independent reference and book reads overlap without refreshing either tim
  }});
  const c=await a.tradeContext('BTCUSDT');assert.equal(c.reference?.observedAt,1000);assert.equal(c.quote.observedAt,1000);assert.equal(c.reference?.timestamp,1000);
 });
+
+test('one successful but event-old reference is refreshed once without changing the freshness threshold',async()=>{
+ let refs=0;const clock=10000;
+ const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>clock,fetcher:async url=>{
+  const p=new URL(String(url)).pathname;
+  if(p.endsWith('exchangeInfo'))return json({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[filter()]}],exchangeFilters:[]});
+  if(p.endsWith('referencePrice'))return json({symbol:'BTCUSDT',referencePrice:++refs===1?'99':'100',timestamp:refs===1?clock-2170:clock-100});
+  if(p.endsWith('bookTicker'))return json({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'2',askQty:'2'});
+  throw Error('unexpected');
+ }});const c=await a.tradeContext('BTCUSDT');assert.equal(refs,2);assert.equal(c.reference?.price,'100');assert.equal(c.reference?.timestamp,clock-100);
+});
+test('still-old refreshed reference blocks after exactly two reads; future data never gets a refresh',async()=>{
+ for(const offset of [-2170,100]){
+ let refs=0;const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>10000,fetcher:async url=>{
+ const p=new URL(String(url)).pathname;
+ if(p.endsWith('exchangeInfo'))return json({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[filter()]}],exchangeFilters:[]});
+ if(p.endsWith('referencePrice')){refs++;return json({symbol:'BTCUSDT',referencePrice:'100',timestamp:10000+offset});}
+ if(p.endsWith('bookTicker'))return json({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'2',askQty:'2'});throw Error('unexpected');
+ }});await assert.rejects(a.tradeContext('BTCUSDT'),/STALE_REFERENCE_PRICE/);assert.equal(refs,offset<0?2:1);
+ }
+});
+test('failed reference refresh has no third request and cannot substitute an average',async()=>{
+ let refs=0;const paths:string[]=[];const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>10000,fetcher:async url=>{
+ const p=new URL(String(url)).pathname;paths.push(p);
+ if(p.endsWith('exchangeInfo'))return json({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[filter()]}],exchangeFilters:[]});
+ if(p.endsWith('referencePrice'))return ++refs===1?json({symbol:'BTCUSDT',referencePrice:'100',timestamp:7830}):json({code:-1007},503);
+ if(p.endsWith('bookTicker'))return json({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'2',askQty:'2'});throw Error('unexpected');
+ }});await assert.rejects(a.tradeContext('BTCUSDT'));assert.equal(refs,2);assert.equal(paths.includes('/api/v3/avgPrice'),false);
+});

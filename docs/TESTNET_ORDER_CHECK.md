@@ -60,3 +60,19 @@ requestAgeMs and eventAgeMs. Negative event age indicates a future exchange
 ages and root cause are not inferred from the original generic error.
 Local validation: 241 tests, TypeScript and production build passed. Operator
 must pull and rerun testnet:order-check. Actual validation is still unconfirmed.
+
+## Confirmed reference event age and one bounded re-read
+
+Operator 4e571cc result: REFERENCE_PRICE, requestAgeMs=295, eventAgeMs=2170.
+The HTTP request was recent but the exchange event exceeded the unchanged
+2000ms limit. Neither a slow local request nor a future timestamp was reported.
+
+Allow one new reference GET only after a successful positive non-null reference
+fails solely for event age while its local request age is still within 2000ms.
+The new response retains its own request timestamp and actual exchange timestamp,
+then must pass every original reference check; the book/context is revalidated
+after the extra read. There is no third read, order retry, transport/HTTP retry,
+average substitution, fabricated timestamp or increase in freshness limits.
+A null/mismatched refreshed reference blocks explicitly. Future timestamps and
+slow requests do not qualify. Actual operator validation still pending.
+Local validation: 244 tests, TypeScript and production build passed.

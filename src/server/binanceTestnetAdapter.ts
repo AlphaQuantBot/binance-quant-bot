@@ -1,7 +1,7 @@
 import {normalizeValuationMarks,type ValuationMark} from './valuationMarks';
 import {backfillTrades,type TradeHistoryWindow} from './tradeBackfill';
 import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
-import { referenceForFilter, type PriceReference } from './priceReference';
+import { referenceForFilter, ReferencePriceFreshnessError, type PriceReference } from './priceReference';
 import { validateTradeContext, type TradeContext } from './tradingRules';
 import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
 import { createHash, createHmac } from 'node:crypto';
@@ -129,12 +129,25 @@ export function createBinanceTestnetAdapter(options: {
       })();
       const quoteAt=now();
       // Read independent reference and book concurrently, retaining original request timestamps.
-      const [reference,book]=await Promise.all([referencePromise,request('GET','/api/v3/ticker/bookTicker',{symbol},false,false)]);
+      const [initialReference,book]=await Promise.all([referencePromise,request('GET','/api/v3/ticker/bookTicker',{symbol},false,false)]);
+      let reference=initialReference;
       const q=object(book);
       if(q.symbol!==symbol)throw Error('BOOK_SYMBOL_MISMATCH');
       const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
       validateTradeContext(context,symbol,now());
-      for(const filter of percent)referenceForFilter(reference,filter,now());
+      try{for(const filter of percent)referenceForFilter(reference,filter,now());}
+      catch(error){
+        // Only a successful, valid but event-old reference gets one fresh read.
+        // Never retry transport/HTTP errors, future timestamps or slow requests.
+        if(!(error instanceof ReferencePriceFreshnessError)||reference?.kind!=='REFERENCE_PRICE'||error.timing.requestAgeMs===null||error.timing.requestAgeMs<0||error.timing.requestAgeMs>2000||error.timing.eventAgeMs===null||error.timing.eventAgeMs<=2000||units(reference.price)<=0n)throw error;
+        const observedAt=now();
+        const raw=object(await request('GET','/api/v3/referencePrice',{symbol},false,false));
+        if(raw.symbol!==symbol||typeof raw.referencePrice!=='string'||units(raw.referencePrice)<=0n)throw Error('REFERENCE_REFRESH_UNCONFIRMED');
+        reference={kind:'REFERENCE_PRICE',price:raw.referencePrice,observedAt,timestamp:raw.timestamp};
+        context.reference=reference;
+        for(const filter of percent)referenceForFilter(reference,filter,now());
+        validateTradeContext(context,symbol,now());
+      }
       return context;
     },
     async accountSnapshot() {
