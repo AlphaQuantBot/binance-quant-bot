@@ -6,7 +6,10 @@ export type AccountSnapshot = {
   environment:'BINANCE_TESTNET'; accountId:string; startedAt:number; observedAt:number;
   canTrade:boolean; balances:Balance[]; openOrders:OpenOrder[];
 };
-const assetPattern = /^[A-Z0-9]{1,24}$/;
+// Exchange balance identifiers may contain Unicode letters (Spot Testnet includes 这是测试币).
+// Preserve exact identities; keep bounded length and reject whitespace/control characters.
+// This read-only parser does not expand the execution symbol allowlist.
+const assetPattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}]{0,23}$/u;
 export function normalizeBalances(rows: unknown): Balance[] {
   if (!Array.isArray(rows)) throw Error('INVALID_BALANCES');
   const seen = new Set<string>();

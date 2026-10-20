@@ -104,3 +104,21 @@ report. The operator must pull this update and rerun preflight in the same keyed
 PowerShell session before diagnosing the root cause. Local regression: 210 fixture
 tests, TypeScript and production build passed. The account failure is unresolved
 until the updated actual output is collected.
+
+
+### Unicode balance compatibility follow-up
+
+The operator's next actual run narrowed the account failure to
+`INVALID_BALANCE_ASSET`. Binance's official testnet changelog (2025-12-18)
+documents Unicode asset `这是测试币` and numeric asset `456` distributed to all
+accounts: https://github.com/binance/binance-spot-api-docs/blob/master/testnet/CHANGELOG.md
+The balance reader previously accepted ASCII uppercase identifiers only. It now
+accepts Unicode letters/numbers/combining marks within the existing 24-character
+limit, preserving names and balances exactly. Duplicate names, malformed amounts,
+whitespace/control characters and unsupported identifiers still fail validation.
+No balances are dropped or assigned invented prices. Execution symbol policies
+are unchanged; account-read success does not authorize trading or pricing these
+assets. The exact offending identifier was not disclosed by the operator.
+
+Pull and rerun `npm.cmd run testnet:preflight` in the same keyed PowerShell.
+Actual authenticated readiness remains unconfirmed until that result is returned.

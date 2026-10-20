@@ -11,3 +11,15 @@ test('authenticated account schema failures expose only allowlisted diagnostic c
  for(const {patch,code} of cases){const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{const p=new URL(String(url)).pathname;return new Response(JSON.stringify(p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'USDT',free:'100',locked:'0'}],privateField:'DO_NOT_LOG',...patch}:{}));}});assert.equal(r.checks.find(c=>c.name==='account')?.code,code);assert.equal(r.authenticatedReady,false);assert.equal(JSON.stringify(r).includes('DO_NOT_LOG'),false);assert.equal(JSON.stringify(r).includes('fixtureSecret123'),false);}
 });
 test('account consistency failure remains fail-closed with an actionable safe code',async()=>{let accounts=0;const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{const p=new URL(String(url)).pathname;return new Response(JSON.stringify(p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'USDT',free:String(100+accounts++),locked:'0'}]}:p==='/api/v3/openOrders'?[]:{}));}});assert.equal(r.checks.find(c=>c.name==='account')?.code,'ACCOUNT_CHANGED_DURING_READ');assert.equal(r.authenticatedReady,false);});
+
+
+test('Unicode testnet balances survive authenticated preflight without authorizing trading',async()=>{
+ const zeroRates={maker:'0',taker:'0',buyer:'0',seller:'0'};
+ const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{
+  const p=new URL(String(url)).pathname;
+  const body=p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'这是测试币',free:'100',locked:'2'},{asset:'456',free:'1',locked:'0'},{asset:'USDT',free:'1000',locked:'0'}]}:p==='/api/v3/openOrders'?[]:p==='/api/v3/account/commission'?{symbol:'BTCUSDT',standardCommission:zeroRates,specialCommission:zeroRates,taxCommission:zeroRates,discount:{enabledForAccount:false,enabledForSymbol:false,discountAsset:'BNB',discount:'0'}}:{};
+  return new Response(JSON.stringify(body));
+ }});
+ assert.equal(r.authenticatedReady,true);assert.equal(r.tradingEnabled,false);
+ assert.equal(JSON.stringify(r).includes('这是测试币'),false);
+});
