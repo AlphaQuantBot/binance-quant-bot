@@ -15,7 +15,8 @@
     "testnet:reconcile": "node --import tsx scripts/reconcile_testnet_orders.ts",
     "testnet:account": "node --import tsx scripts/reconcile_testnet_account.ts",
     "testnet:protection": "node --import tsx scripts/audit_testnet_protection.ts",
-    "testnet:positions": "node --import tsx scripts/audit_testnet_positions.ts"
+    "testnet:positions": "node --import tsx scripts/audit_testnet_positions.ts",
+    "testnet:replacement-plan": "node --import tsx scripts/plan_testnet_stop_replacement.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

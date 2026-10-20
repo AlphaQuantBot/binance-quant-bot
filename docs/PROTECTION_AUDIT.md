@@ -130,3 +130,40 @@ implemented or authorized by this state, and cancel/replace atomicity is not
 claimed. Replacement still needs a fresh position/balance/fee calculation and
 conditional-order risk/filter checks. Existing single-process/manual stale-lock
 recovery limitations remain. Tests use fixtures, never real exchange requests.
+
+## Post-cancel remaining position and replacement proposal
+
+`planStopReplacement` computes a proposal only after a reconciled terminal stop
+and cancellation resolution. Complete execution/fee evidence is required even
+for zero fills. Remaining base quantity is old stop quantity minus cumulative
+SELL fills minus fees paid in the base asset. Quote/third-asset fees are retained
+in settlement and never subtracted from base holdings. A fresh account snapshot
+must start after the previous order update, have zero locked base and exactly the
+computed free base. This conservative model supports a single position covering
+the entire base holding; any other open account order blocks it. Transfers, extra
+positions or balance discrepancies require separate reconciliation.
+
+Quantity is rounded down to LOT_SIZE only, with uncovered dust explicitly reported;
+a dust-only or below-minimum notional proposal is rejected. Zero remainder reports
+POSITION_CLOSED with no candidate. The static stop-limit proposal checks both
+trigger/limit ticks and bounds, limit <= trigger < current bid, notional limits,
+percent-price evidence, supported conditional order counts and explicit operator
+risk policy. Unknown relevant filters fail closed. This is not a complete Binance
+execution-rule/rate-limit/commission-reservation gate. A bid check is conservative
+planning evidence, not the exchange's last-trade trigger rule.
+
+`npm run testnet:replacement-plan` performs read-only query reconciliation of an
+existing journal order and before/after account reads. Configure
+APP_TESTNET_REPLACEMENT_PLAN to a JSON object containing `previousRequestId`, a new
+`requestId`, `stopPrice`, `limitPrice` and the explicit `policy` schema from
+TRADING_RULES.md. Use the same independent testnet key/account and journal as the
+previous steps. No default policy is injected. The CLI updates read reconciliation
+in the existing private journal, but cannot submit or cancel exchange orders.
+
+Every proposal has `submissionAuthorized:false`. It expires conceptually with its
+observations and must never be treated as a reusable send permit. It does not
+reserve balances, check a trusted full-account daily-risk producer, or submit a
+replacement. Automatic orchestration remains disabled; actual testnet verification
+and those gates are required before enabling it. Fixture tests verify the math,
+partial/full fills, fee assets, dust and failure cases; no real testnet run has
+been performed in this session.
