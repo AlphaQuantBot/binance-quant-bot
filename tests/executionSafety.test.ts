@@ -57,6 +57,6 @@ test('production route guard precedes all live handlers; bot state mutation is g
   for (const path of paths) assert.ok(guard < server.indexOf(`app.post('${path}'`));
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   const cycle = app.slice(app.indexOf('const executeBotCycle = useCallback'));
-  assert.ok(cycle.indexOf('if (isLive) return;') < cycle.indexOf('setBots('));
-  assert.ok(cycle.indexOf('if (isLive) return;') < cycle.indexOf('setSettings('));
+  assert.ok(cycle.indexOf('if (isLive || !isFreshMarket(tickerProvenanceRef.current)) return;') < cycle.indexOf('setBots('));
+  assert.ok(cycle.indexOf('if (isLive || !isFreshMarket(tickerProvenanceRef.current)) return;') < cycle.indexOf('setSettings('));
 });

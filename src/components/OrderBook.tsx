@@ -51,6 +51,7 @@ export const OrderBook: React.FC<OrderBookProps> = ({
 
   return (
     <div className="bg-[#0b101d] rounded-lg border border-slate-800/80 p-3 flex flex-col h-full text-xs font-mono select-none">
+      <p role="status" className="text-xs text-amber-300 p-2">ÖRNEK EMİR DEFTERİ • Rastgele üretilir; gerçek borsa derinliği değildir.</p>
       <div className="flex items-center justify-between pb-2 border-b border-slate-800/70 mb-2">
         <span className="font-semibold text-slate-300 font-sans">Emir Defteri</span>
         <div className="flex items-center gap-1.5 text-[11px]">
@@ -143,3 +144,4 @@ export const OrderBook: React.FC<OrderBookProps> = ({
     </div>
   );
 };
+

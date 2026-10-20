@@ -38,6 +38,7 @@ export const AIPredictionPanel: React.FC<AIPredictionPanelProps> = ({
   const [riskProfile, setRiskProfile] = useState<'Düşük Risk / Koruma' | 'Dengeli / Büyüme' | 'Agresif Scalping'>('Dengeli / Büyüme');
 
   const handleRunOptimizer = async () => {
+    setOptimizerResult(null);
     setIsLoadingOptimizer(true);
     try {
       const res = await fetch('/api/ai/optimize-strategy', {
@@ -86,6 +87,7 @@ export const AIPredictionPanel: React.FC<AIPredictionPanelProps> = ({
 
   return (
     <div className="space-y-4">
+      <p role="status" className="rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-200">Yapay zekâ model çıktısı • Doğrulanmış sinyal veya ölçülmüş getiri tahmini değildir.</p>
       {/* Top Banner */}
       <div className="bg-[#0b101d] rounded-lg border border-slate-800/80 p-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -353,3 +355,4 @@ export const AIPredictionPanel: React.FC<AIPredictionPanelProps> = ({
     </div>
   );
 };
+

@@ -1,3 +1,4 @@
+import { LiveTickerFeed, createMarketDataRouter } from './src/server/marketData';
 import { createOperatorAuth } from './src/server/operatorAuth';
 import { createCredentialVault, credentialStatus } from './src/server/credentialVault';
 import { liveExecutionGuard, exchangeCooldownResponse } from './src/server/executionSafety';
@@ -30,6 +31,8 @@ let activeServerCredentials: { apiKey: string; secretKey: string; exchange: stri
 let cachedTickersMap = new Map<string, any>();
 let cachedTickers: any[] = [];
 let lastTickersFetch = 0;
+const liveTickerFeed = new LiveTickerFeed();
+let websocketConnected = false;
 
 // Secrets are encrypted on disk and never returned to the browser.
 function getActiveCredentials() {
@@ -240,36 +243,6 @@ app.get('/api/binance/symbols', async (_req: Request, res: Response) => {
   }
 });
 
-// 0.05 Live Binance Ping & Health Diagnostic Endpoint
-app.get('/api/binance/ping', async (_req: Request, res: Response) => {
-  if (Date.now() < ipBannedUntil) {
-    const remainingSec = Math.max(1, Math.round((ipBannedUntil - Date.now()) / 1000));
-    return res.json({
-      success: true,
-      status: 'ONLINE',
-      gateway: 'api.binance.com',
-      peering: 'Binance Global Direct (Dolar/USDT)',
-      latencyMs: 24,
-      serverTime: Date.now(),
-      activePairsCount: cachedTickers.length || 757,
-      isCooldown: true,
-      cooldownRemainingSec: remainingSec,
-      message: `Binance Global entegrasyonu tam aktif (Dolar/USDT). Borsa IP güvenlik bekleme süresi: ~${remainingSec} sn.`
-    });
-  }
-
-  return res.json({
-    success: true,
-    status: 'ONLINE',
-    gateway: 'stream.binance.com',
-    peering: 'Google Cloud Dedicated Peering (Ultra Hızlı WebSocket Stream)',
-    latencyMs: 18,
-    serverTime: Date.now(),
-    activePairsCount: cachedTickers.length || 757,
-    message: 'Binance API v3 & WebSocket akışı tam entegre ve aktif (Dolar/USDT).'
-  });
-});
-
 // 0.08 Server-side API Credentials State (Preserves credentials across tab reloads)
 app.get('/api/binance/config', (_req: Request, res: Response) => {
   try { return res.json(credentialStatus(credentialVault.load(), credentialVault.configured)); }
@@ -335,63 +308,7 @@ app.post('/api/binance/account', async (req: Request, res: Response) => {
 
   // If Binance IP rate limit cooldown is active, return verified dollar vault response without hammering borsa
   if (now < ipBannedUntil) {
-    const remainingSec = Math.max(1, Math.round((ipBannedUntil - now) / 1000));
-    const effectiveUsdt = (typeof creds?.liveBalance === 'number' && creds.liveBalance > 0)
-      ? creds.liveBalance
-      : ((typeof req.body.liveSpotBalanceUsdt === 'number' && req.body.liveSpotBalanceUsdt > 0) ? req.body.liveSpotBalanceUsdt : 39.50);
-    const effectiveCash = (typeof creds?.availableCash === 'number' && creds.availableCash >= 0)
-      ? Math.min(creds.availableCash, effectiveUsdt)
-      : 3.04;
-    
-    const bnbTicker = cachedTickersMap.get('BNBUSDT') || cachedTickers.find(t => t.symbol === 'BNBUSDT');
-    const bnbPrice = bnbTicker ? (parseFloat(bnbTicker.lastPrice) || 741.5) : 741.5;
-    let freeBnb = 0;
-    if (lastBalanceCache?.data?.bnbBudget?.freeBnb) {
-      freeBnb = lastBalanceCache.data.bnbBudget.freeBnb;
-    }
-    const bnbUsdVal = parseFloat((freeBnb * bnbPrice).toFixed(2));
-    const discountActive = bnbUsdVal >= 0.50;
-
-    const fallbackHoldings: any[] = [
-      { asset: 'USDT', free: effectiveCash, locked: 0, estimatedUsd: effectiveCash, symbol: 'USDTUSDT', currentPrice: 1 }
-    ];
-    if (freeBnb > 0) {
-      fallbackHoldings.push({
-        asset: 'BNB',
-        free: freeBnb,
-        locked: 0,
-        estimatedUsd: bnbUsdVal,
-        symbol: 'BNBUSDT',
-        currentPrice: bnbPrice
-      });
-    }
-
-    const cooldownPayload = {
-      success: true,
-      canTrade: true,
-      totalSpotVaultUsdt: effectiveUsdt,
-      liveSpotBalanceUsdt: effectiveUsdt,
-      availableCashUsdt: effectiveCash,
-      freeUsdt: effectiveUsdt,
-      freeTry: 0,
-      isBinanceTR: false,
-      exchange: 'BINANCE',
-      isCooldown: true,
-      cooldownRemainingSec: remainingSec,
-      message: `Binance Global API anahtarları aktif ve doğrulandı. Borsa IP güvenlik bekleme süresi: ~${remainingSec} sn.`,
-      bnbBudget: {
-        freeBnb,
-        bnbPrice,
-        bnbUsdValue: bnbUsdVal,
-        discountActive,
-        discountRate: '0.075%',
-        standardRate: '0.10%',
-        estimatedTradesRemaining: Math.max(0, Math.floor(bnbUsdVal / 0.035)),
-        totalSavedUsdt: 4.85
-      },
-      balances: fallbackHoldings
-    };
-    return res.json(cooldownPayload);
+    return res.status(503).json(exchangeCooldownResponse(ipBannedUntil, now));
   }
 
   const isBinanceTR = exchange === 'BINANCE_TR';
@@ -519,69 +436,8 @@ app.post('/api/binance/account', async (req: Request, res: Response) => {
             break;
           } else if (data.msg) {
             if (response.status === 418 || data.code === -1003) {
-              const match = data.msg.match(/until\s+(\d+)/);
-              if (match) {
-                ipBannedUntil = parseInt(match[1], 10);
-              } else {
-                ipBannedUntil = Date.now() + 60000;
-              }
-              const remainingSec = Math.max(1, Math.round((ipBannedUntil - Date.now()) / 1000));
-              const creds = getActiveCredentials();
-              const effectiveUsdt = (typeof creds?.liveBalance === 'number' && creds.liveBalance > 0) 
-                ? creds.liveBalance 
-                : 39.50;
-              const effectiveCash = (typeof creds?.availableCash === 'number' && creds.availableCash >= 0)
-                ? Math.min(creds.availableCash, effectiveUsdt)
-                : 3.04;
-              
-              const bnbTicker = cachedTickersMap.get('BNBUSDT') || cachedTickers.find(t => t.symbol === 'BNBUSDT');
-              const bnbPrice = bnbTicker ? (parseFloat(bnbTicker.lastPrice) || 741.5) : 741.5;
-              let freeBnb = 0;
-              if (lastBalanceCache?.data?.bnbBudget?.freeBnb) {
-                freeBnb = lastBalanceCache.data.bnbBudget.freeBnb;
-              }
-              const bnbUsdVal = parseFloat((freeBnb * bnbPrice).toFixed(2));
-              const discountActive = bnbUsdVal >= 0.50;
-
-              const fallbackHoldings: any[] = [
-                { asset: 'USDT', free: effectiveCash, locked: 0, estimatedUsd: effectiveCash, symbol: 'USDTUSDT', currentPrice: 1 }
-              ];
-              if (freeBnb > 0) {
-                fallbackHoldings.push({
-                  asset: 'BNB',
-                  free: freeBnb,
-                  locked: 0,
-                  estimatedUsd: bnbUsdVal,
-                  symbol: 'BNBUSDT',
-                  currentPrice: bnbPrice
-                });
-              }
-
-              return res.json({
-                success: true,
-                canTrade: true,
-                totalSpotVaultUsdt: effectiveUsdt,
-                liveSpotBalanceUsdt: effectiveUsdt,
-                availableCashUsdt: effectiveCash,
-                freeUsdt: effectiveUsdt,
-                freeTry: 0,
-                isBinanceTR: false,
-                exchange: 'BINANCE',
-                isCooldown: true,
-                cooldownRemainingSec: remainingSec,
-                message: `Binance Global API anahtarları aktif ve doğrulandı. Borsa IP güvenlik bekleme süresi: ~${remainingSec} sn.`,
-                bnbBudget: {
-                  freeBnb,
-                  bnbPrice,
-                  bnbUsdValue: bnbUsdVal,
-                  discountActive,
-                  discountRate: '0.075%',
-                  standardRate: '0.10%',
-                  estimatedTradesRemaining: Math.max(0, Math.floor(bnbUsdVal / 0.035)),
-                  totalSavedUsdt: 4.85
-                },
-                balances: fallbackHoldings
-              });
+              ipBannedUntil = Date.now() + 60000;
+              return res.status(503).json(exchangeCooldownResponse(ipBannedUntil));
             }
             return res.status(400).json({
               success: false,
@@ -1343,19 +1199,20 @@ app.get('/api/binance/ip-status', (_req: Request, res: Response) => {
     isBanned,
     remainingSec,
     cachedTickersCount: cachedTickers.length,
-    websocketOnline: true
+    marketDataFresh: liveTickerFeed.snapshot().data.length > 0,
+    websocketOnline: websocketConnected
   });
 });
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({
+const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
     },
   },
-});
+}) : null;
 
 // Default top pairs watchlist
 const DEFAULT_TOP_SYMBOLS = [
@@ -1365,34 +1222,11 @@ const DEFAULT_TOP_SYMBOLS = [
   'APTUSDT', 'OPUSDT', 'KASUSDT', 'TAOUSDT', 'SEIUSDT', 'OGNUSDT'
 ];
 
-// Fallback market data in case of network restriction or offline sandbox
-const fallbackTickers = [
-  { symbol: 'BTCUSDT', lastPrice: '94250.80', priceChangePercent: '3.42', highPrice: '95100.00', lowPrice: '91200.00', volume: '38450.21', quoteVolume: '3623912000' },
-  { symbol: 'ETHUSDT', lastPrice: '3485.50', priceChangePercent: '4.85', highPrice: '3520.00', lowPrice: '3310.00', volume: '245600.12', quoteVolume: '855916418' },
-  { symbol: 'SOLUSDT', lastPrice: '218.40', priceChangePercent: '7.12', highPrice: '224.50', lowPrice: '202.80', volume: '1420500.50', quoteVolume: '310237309' },
-  { symbol: 'BNBUSDT', lastPrice: '685.20', priceChangePercent: '1.95', highPrice: '692.00', lowPrice: '670.00', volume: '98400.30', quoteVolume: '67423886' },
-  { symbol: 'SUIUSDT', lastPrice: '3.62', priceChangePercent: '12.45', highPrice: '3.78', lowPrice: '3.18', volume: '18500200.00', quoteVolume: '66970724' },
-  { symbol: 'OGNUSDT', lastPrice: '0.03884', priceChangePercent: '4.52', highPrice: '0.0497', lowPrice: '0.0352', volume: '648716404.00', quoteVolume: '26916981' },
-  { symbol: 'DOGEUSDT', lastPrice: '0.2450', priceChangePercent: '-2.15', highPrice: '0.2580', lowPrice: '0.2380', volume: '482910000.00', quoteVolume: '118312950' },
-  { symbol: 'AVAXUSDT', lastPrice: '38.90', priceChangePercent: '5.20', highPrice: '39.80', lowPrice: '36.50', volume: '1120000.00', quoteVolume: '43568000' },
-  { symbol: 'LINKUSDT', lastPrice: '19.45', priceChangePercent: '6.30', highPrice: '19.90', lowPrice: '18.10', volume: '1540000.00', quoteVolume: '29953000' },
-  { symbol: 'NEARUSDT', lastPrice: '6.75', priceChangePercent: '8.10', highPrice: '6.95', lowPrice: '6.15', volume: '3950000.00', quoteVolume: '26662500' },
-  { symbol: 'RENDERUSDT', lastPrice: '8.45', priceChangePercent: '9.80', highPrice: '8.70', lowPrice: '7.60', volume: '2800000.00', quoteVolume: '23660000' },
-  { symbol: 'PEPEUSDT', lastPrice: '0.0000185', priceChangePercent: '15.40', highPrice: '0.0000192', lowPrice: '0.0000158', volume: '4200000000000.00', quoteVolume: '77700000' },
-  { symbol: 'INJUSDT', lastPrice: '28.30', priceChangePercent: '4.15', highPrice: '29.10', lowPrice: '27.00', volume: '620000.00', quoteVolume: '17546000' },
-  { symbol: 'TAOUSDT', lastPrice: '542.00', priceChangePercent: '8.75', highPrice: '558.00', lowPrice: '495.00', volume: '124000.00', quoteVolume: '67208000' },
-  { symbol: 'FETUSDT', lastPrice: '1.68', priceChangePercent: '6.90', highPrice: '1.74', lowPrice: '1.55', volume: '4300000.00', quoteVolume: '7224000' },
-  { symbol: 'TIAUSDT', lastPrice: '6.20', priceChangePercent: '-1.40', highPrice: '6.45', lowPrice: '6.05', volume: '1900000.00', quoteVolume: '11780000' },
-];
-
-// Seed map with fallback
-fallbackTickers.forEach(t => cachedTickersMap.set(t.symbol, t));
-cachedTickers = Array.from(cachedTickersMap.values());
-
 // 24/7 Live Binance WebSocket Ticker Stream (Zero REST Rate-Limit Weight)
 function startBinanceWebSocketStream() {
   try {
     const ws = new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr');
+    ws.onopen = () => { websocketConnected = true; };
     ws.onmessage = async (event) => {
       try {
         let text = '';
@@ -1423,6 +1257,7 @@ function startBinanceWebSocketStream() {
               };
             });
           if (usdtList.length > 0) {
+            liveTickerFeed.update(usdtList);
             for (const item of usdtList) {
               cachedTickersMap.set(item.symbol, item);
             }
@@ -1432,8 +1267,9 @@ function startBinanceWebSocketStream() {
         }
       } catch {}
     };
-    ws.onerror = () => {};
+    ws.onerror = () => { websocketConnected = false; };
     ws.onclose = () => {
+      websocketConnected = false;
       setTimeout(startBinanceWebSocketStream, 4000);
     };
   } catch {}
@@ -1443,24 +1279,25 @@ startBinanceWebSocketStream();
 // Pre-seed all live Binance token prices so every single wallet coin is accurately valued immediately
 async function seedAllBinancePrices() {
   try {
-    const res = await fetch('https://api.binance.com/api/v3/ticker/price', { signal: AbortSignal.timeout(6000) });
+    const res = await fetch('https://api.binance.com/api/v3/ticker/24hr', { signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       const allPrices = await res.json();
       if (Array.isArray(allPrices)) {
+        liveTickerFeed.update(allPrices);
         for (const p of allPrices) {
-          if (p.symbol && p.price) {
+          if (p.symbol && p.lastPrice) {
             const existing = cachedTickersMap.get(p.symbol);
             if (existing) {
-              existing.lastPrice = p.price;
+              existing.lastPrice = p.lastPrice;
             } else {
               cachedTickersMap.set(p.symbol, {
                 symbol: p.symbol,
-                lastPrice: p.price,
-                priceChangePercent: '0.00',
-                highPrice: p.price,
-                lowPrice: p.price,
-                volume: '0',
-                quoteVolume: '0'
+                lastPrice: p.lastPrice,
+                priceChangePercent: p.priceChangePercent,
+                highPrice: p.highPrice,
+                lowPrice: p.lowPrice,
+                volume: p.volume,
+                quoteVolume: p.quoteVolume
               });
             }
           }
@@ -1473,80 +1310,17 @@ async function seedAllBinancePrices() {
 seedAllBinancePrices();
 setInterval(seedAllBinancePrices, 60000);
 
-// Helper to fetch live Binance 24h ticker across WebSocket cache & resilient fallback
-async function fetchBinanceTickers(): Promise<any[]> {
-  if (cachedTickers.length > 0) {
-    return cachedTickers;
+// Market data never fabricates prices when upstream is unavailable.
+app.use('/api/binance', createMarketDataRouter(liveTickerFeed, async (symbol, interval, limit) => {
+  if (Date.now() < ipBannedUntil) throw new Error('Exchange cooldown');
+  for (const host of ['https://api-gcp.binance.com', 'https://api.binance.com']) {
+    try {
+      const response = await fetch(`${host}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`, { signal: AbortSignal.timeout(3500) });
+      if (response.ok) return await response.json();
+    } catch {}
   }
-  return fallbackTickers;
-}
-
-// 1. Tickers endpoint
-app.get('/api/binance/tickers', async (_req: Request, res: Response) => {
-  try {
-    const tickers = await fetchBinanceTickers();
-    res.json({ success: true, count: tickers.length, data: tickers });
-  } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
-  }
-});
-
-// 2. Candlestick (Klines) endpoint
-app.get('/api/binance/klines', async (req: Request, res: Response) => {
-  const symbol = (req.query.symbol as string || 'BTCUSDT').toUpperCase();
-  const interval = (req.query.interval as string || '15m');
-  const limit = parseInt(req.query.limit as string || '60', 10);
-
-  try {
-    let data: any = null;
-    if (Date.now() >= ipBannedUntil) {
-      for (const host of ['https://api-gcp.binance.com', 'https://api.binance.com', 'https://api1.binance.com']) {
-        try {
-          const response = await fetch(`${host}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`, {
-            signal: AbortSignal.timeout(3500)
-          });
-          if (response.ok) {
-            data = await response.json();
-            break;
-          }
-        } catch {}
-      }
-    }
-    if (!data || !Array.isArray(data)) throw new Error('Binance klines hosts uncontactable or cooling down');
-    // Format: [ [time, open, high, low, close, volume], ... ]
-    const formatted = data.map((k: any) => ({
-      time: k[0],
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5]),
-    }));
-    return res.json({ success: true, symbol, interval, data: formatted });
-  } catch (error) {
-    // Generate coherent synthetic candles based on last price
-    const baseTicker = fallbackTickers.find(t => t.symbol === symbol) || { lastPrice: '100' };
-    const basePrice = parseFloat(baseTicker.lastPrice);
-    const now = Date.now();
-    const stepMs = interval === '1m' ? 60000 : interval === '5m' ? 300000 : interval === '1h' ? 3600000 : 900000;
-    const candles = [];
-    let currentPrice = basePrice * 0.96;
-
-    for (let i = limit; i >= 0; i--) {
-      const time = now - i * stepMs;
-      const volatility = basePrice * 0.008;
-      const open = currentPrice;
-      const change = (Math.random() - 0.48) * volatility;
-      const close = Math.max(0.000001, open + change);
-      const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-      const low = Math.min(open, close) - Math.random() * volatility * 0.5;
-      const volume = Math.floor(Math.random() * 500000) + 10000;
-      currentPrice = close;
-      candles.push({ time, open, high, low, close, volume });
-    }
-    return res.json({ success: true, symbol, interval, synthetic: true, data: candles });
-  }
-});
+  throw new Error('Market data unavailable');
+}));
 
 // 3. Early Gem Radar (Pre-Binance / Listing candidates scanner)
 app.get('/api/gems/radar', (_req: Request, res: Response) => {
@@ -1653,7 +1427,7 @@ app.get('/api/gems/radar', (_req: Request, res: Response) => {
     }
   ];
 
-  res.json({ success: true, count: earlyGems.length, data: earlyGems });
+  res.json({ success: true, count: earlyGems.length, data: earlyGems, provenance: { source: 'DEMO', verified: false } });
 });
 
 // 4. Gemini AI Market Predictor Endpoint
@@ -1674,11 +1448,11 @@ Mevcut Fiyat: ${priceSafe} USDT
 24s En Düşük: ${low24h || priceSafe * 0.97} USDT
 24s Hacim: ${volume24h || 'N/A'} USDT
 Teknik Göstergeler:
-- RSI (14): ${indicators?.rsi || 54.2}
-- MACD Durumu: ${indicators?.macd || 'Bullish Crossover'}
-- Bollinger Bandı Konumu: ${indicators?.bbPosition || 'Orta Band Üzerinde'}
+- RSI (14): ${indicators?.rsi ?? 'N/A'}
+- MACD Durumu: ${indicators?.macd || 'N/A'}
+- Bollinger Bandı Konumu: ${indicators?.bbPosition || 'N/A'}
 - Trend Yönü: ${indicators?.trend || 'Yukarı'}
-- Emir Defteri Alıcı/Satıcı Baskısı: %${indicators?.orderBookBias || 58} Alıcı Baskısı
+- Emir Defteri Alıcı/Satıcı Baskısı: %${indicators?.orderBookBias ?? 'N/A'} Alıcı Baskısı
 
 Aşağıdaki JSON şemasında yanıt ver:
 {
@@ -1699,7 +1473,7 @@ Aşağıdaki JSON şemasında yanıt ver:
 }`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai!.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -1710,41 +1484,9 @@ Aşağıdaki JSON şemasında yanıt ver:
 
     const responseText = response.text || '{}';
     const parsedData = JSON.parse(responseText.trim());
-    return res.json({ success: true, symbol: symbolSafe, result: parsedData });
-  } catch (error) {
-    console.error('Gemini AI prediction error:', error);
-    // Intelligent heuristic fallback in case of Gemini quota or connection glitch
-    const isBull = (priceChange24h || 0) >= 0;
-    const baseP = parseFloat(priceSafe);
-    const targetShort = isBull ? baseP * 1.035 : baseP * 0.965;
-    const targetMid = isBull ? baseP * 1.072 : baseP * 0.93;
-    const stopLoss = isBull ? baseP * 0.982 : baseP * 1.018;
-
-    return res.json({
-      success: true,
-      symbol: symbolSafe,
-      fallback: true,
-      result: {
-        signal: isBull ? 'BUY' : 'NEUTRAL',
-        confidenceScore: 84,
-        targetPriceShortTerm: parseFloat(targetShort.toFixed(4)),
-        targetPriceMidTerm: parseFloat(targetMid.toFixed(4)),
-        stopLossPrice: parseFloat(stopLoss.toFixed(4)),
-        suggestedTakeProfitPercent: 3.5,
-        suggestedStopLossPercent: 1.8,
-        riskRewardRatio: '1:2.0',
-        marketRegime: isBull ? 'Trending Bull' : 'Range-Bound',
-        recommendedPositionSizePercent: 8,
-        summaryAnalysis: `${symbolSafe} momentum ve sipariş derinliği incelendi. Hacim destekli fiyat hareketi ve RSI dinamikleri pozitif risk/ödül dengesini işaret ediyor.`,
-        keySupport: parseFloat((baseP * 0.975).toFixed(4)),
-        keyResistance: parseFloat((baseP * 1.04).toFixed(4)),
-        actionSteps: [
-          'Dinamik %1.8 Trailing Stop-Loss ile pozisyon açılışı',
-          '%50 kâr hedefi için TP1 emrini gir',
-          'Kalan %50 için karı kilitlemek üzere başabaş (Breakeven) taşı'
-        ]
-      }
-    });
+    return res.json({ success: true, symbol: symbolSafe, result: parsedData, provenance: { source: 'GEMINI_MODEL', verified: false } });
+  } catch {
+    return res.status(503).json({ success: false, code: 'AI_UNAVAILABLE', result: null });
   }
 });
 
@@ -1775,7 +1517,7 @@ Binance piyasasındaki son likidite ve volatilite yapısına göre botun kârlı
 }`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai!.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -1785,29 +1527,9 @@ Binance piyasasındaki son likidite ve volatilite yapısına göre botun kârlı
     });
 
     const parsed = JSON.parse(response.text?.trim() || '{}');
-    return res.json({ success: true, result: parsed });
-  } catch (error) {
-    console.error('Gemini AI strategy optimization error:', error);
-    return res.json({
-      success: true,
-      fallback: true,
-      result: {
-        strategyName: 'AI Volatility-Adaptive Scalper v3',
-        recommendedTrailingStop: 1.4,
-        recommendedTakeProfit: 3.8,
-        recommendedLeverage: 1,
-        dcaMultiplier: 1.3,
-        maxOpenPositions: 4,
-        cooldownMinutesBetweenTrades: 5,
-        expectedProfitIncreasePercent: '+22.4% verimlilik artışı',
-        riskAssessment: 'Sert likidite iğnelerine karşı korumalı daraltılmış stop aralığı ve kar realizasyonu ile drawdown %2.8 seviyesine çekilmiştir.',
-        rules: [
-          'RSI 42-58 nötr bantta scalping grid emri işlet',
-          'Hacim ortalamanın 2.5 katına çıktığında breakout moduna geç',
-          'Günlük maksimum %3 kayıp limitine ulaşıldığında botu 24 saat dondur'
-        ]
-      }
-    });
+    return res.json({ success: true, result: parsed, provenance: { source: 'GEMINI_MODEL', verified: false } });
+  } catch {
+    return res.status(503).json({ success: false, code: 'AI_UNAVAILABLE', result: null });
   }
 });
 
@@ -1818,7 +1540,7 @@ let lastAlphaScanTime = 0;
 app.get('/api/ai/alpha-scanner', async (_req: Request, res: Response) => {
   const now = Date.now();
   if (cachedAlphaResult && now - lastAlphaScanTime < 45000) {
-    return res.json({ success: true, data: cachedAlphaResult, cached: true, timestamp: lastAlphaScanTime });
+    return res.json({ success: true, data: cachedAlphaResult, cached: true, timestamp: lastAlphaScanTime, provenance: { source: 'GEMINI_MODEL', verified: false } });
   }
 
   const prompt = `Sen elit seviyede bir gün içi (day trading / intraday scalper) algoritmik trader ve blockchain istihbarat hacker'ısın.
@@ -1840,7 +1562,7 @@ Her bir fırsat için:
 
 Şu JSON şemasında yanıt ver:
 {
-  "scannerStatus": "LIVE_DEEP_WEB_SCANNING",
+  "scannerStatus": "MODEL_GENERATED_UNVERIFIED",
   "globalMarketMood": "GÜN_İÇİ_SCALP_MOMENTUMU",
   "hackerAnalysis": "Gün içi al-sat likiditesi, Binance komisyonları ve balina girişlerinin kısa vadeli kâr analizi (Türkçe)",
   "opportunities": [
@@ -1859,82 +1581,12 @@ Her bir fırsat için:
   ]
 }`;
 
-  const defaultAlphaFallback = {
-    scannerStatus: "LIVE_DEEP_WEB_SCANNING",
-    globalMarketMood: "GÜN_İÇİ_SCALP_MOMENTUMU",
-    hackerAnalysis: "Gün içi al-sat motoru aktif: Balinalar yüksek likiditeli altcoinlerde anlık alım duvarları ördü. Binance %0.20 al-sat komisyonu düşülerek her işlemde ortalama %1.5 - %3.8 net gün içi kâr hedefleniyor.",
-    opportunities: [
-      {
-        symbol: "SOLUSDT",
-        tokenName: "Solana",
-        alphaHeadline: "Son 15 dakikada DEX hacminde 45M$ net alıcı girişi ve pump.fun anlık likidite patlaması.",
-        source: "Binance Spot Flow & DEX Tracker",
-        sentimentScore: 96,
-        tradeAction: "HIZLI_SCALP_AL",
-        expectedReturnPercent: "+%2.8 Net (+%3.0 Brüt)",
-        rationale: "Gün içi hızlı dalga: %0.20 Binance komisyonu sonrası +%2.8 net kâr ile pozisyonu dakikalar içinde nakde çevirme hedefi.",
-        recommendedStopLoss: 1.2,
-        priority: "CRITICAL_ALPHA"
-      },
-      {
-        symbol: "SUIUSDT",
-        tokenName: "Sui Network",
-        alphaHeadline: "Merkezi borsalara 18M$ anlık piyasa alım emri iletildi, 15m RSI aşırı satımdan döndü.",
-        source: "On-Chain Whale Radar",
-        sentimentScore: 93,
-        tradeAction: "GÜN_İÇİ_MOMENTUM",
-        expectedReturnPercent: "+%3.4 Net (+%3.6 Brüt)",
-        rationale: "Saatlik direnç kırılımı. Komisyonlar hesaba katıldığında net +%3.4 kâr alındığı an USDT kasasına geri dönülecek.",
-        recommendedStopLoss: 1.4,
-        priority: "HIGH_YIELD"
-      },
-      {
-        symbol: "PEPEUSDT",
-        tokenName: "Pepe",
-        alphaHeadline: "Binance derinlik defterinde 0.0000098 seviyesinde 3M$ devasa destek duvarı oluştu.",
-        source: "Binance Order Book Depth",
-        sentimentScore: 90,
-        tradeAction: "HIZLI_SCALP_AL",
-        expectedReturnPercent: "+%4.1 Net (+%4.3 Brüt)",
-        rationale: "Yüksek volatilite scalpi: Gün içi ani fitil hareketinde komisyon sonrası +%4.1 net kâr hedefleniyor.",
-        recommendedStopLoss: 1.8,
-        priority: "WHALE_ACCUMULATION"
-      },
-      {
-        symbol: "BTCUSDT",
-        tokenName: "Bitcoin",
-        alphaHeadline: "ETF seansı öncesi vadeli-spot arbitraj farkında 120M$ pozitif hacim uyumsuzluğu.",
-        source: "Derivatives Liquidity Index",
-        sentimentScore: 94,
-        tradeAction: "GÜN_İÇİ_MOMENTUM",
-        expectedReturnPercent: "+%1.4 Net (+%1.6 Brüt)",
-        rationale: "Düşük riskli gün içi scalp: Büyük hacimli güvenli paritede komisyon sonrası +%1.4 net kâr alımı.",
-        recommendedStopLoss: 0.9,
-        priority: "CRITICAL_ALPHA"
-      },
-      {
-        symbol: "FETUSDT",
-        tokenName: "Artificial Superintelligence",
-        alphaHeadline: "AI konferansı öncesi whale cüzdanlarından 24 saatte 6.4M$ spot çekim tamamlandı.",
-        source: "Arkham Intelligence Whale Alert",
-        sentimentScore: 89,
-        tradeAction: "KIRILIM_TAKİBİ",
-        expectedReturnPercent: "+%3.1 Net (+%3.3 Brüt)",
-        rationale: "Gün içi hacim kırılımı: 15 dakikalık EMA kesişiminde komisyon sonrası net +%3.1 kâr alma planı.",
-        recommendedStopLoss: 1.3,
-        priority: "HIGH_YIELD"
-      }
-    ]
-  };
-
   try {
     if (!process.env.GEMINI_API_KEY) {
-      cachedAlphaResult = defaultAlphaFallback;
-      lastAlphaScanTime = now;
-      return res.json({ success: true, data: defaultAlphaFallback, fallback: true, timestamp: now });
+      return res.status(503).json({ success: false, code: 'AI_UNAVAILABLE', data: null });
     }
 
-    const aiPromise = ai.models.generateContent({
+    const aiPromise = ai!.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -1950,21 +1602,12 @@ Her bir fırsat için:
     if (parsed && Array.isArray(parsed.opportunities) && parsed.opportunities.length > 0) {
       cachedAlphaResult = parsed;
       lastAlphaScanTime = now;
-      return res.json({ success: true, data: parsed, timestamp: now });
+      return res.json({ success: true, data: parsed, timestamp: now, provenance: { source: 'GEMINI_MODEL', verified: false } });
     }
 
-    cachedAlphaResult = defaultAlphaFallback;
-    lastAlphaScanTime = now;
-    return res.json({ success: true, data: defaultAlphaFallback, fallback: true, timestamp: now });
-  } catch (error) {
-    cachedAlphaResult = defaultAlphaFallback;
-    lastAlphaScanTime = now;
-    return res.json({
-      success: true,
-      fallback: true,
-      timestamp: now,
-      data: defaultAlphaFallback
-    });
+    return res.status(503).json({ success: false, code: 'AI_UNAVAILABLE', data: null });
+  } catch {
+    return res.status(503).json({ success: false, code: 'AI_UNAVAILABLE', data: null });
   }
 });
 

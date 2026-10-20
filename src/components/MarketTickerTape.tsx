@@ -35,7 +35,7 @@ export const MarketTickerTape: React.FC<MarketTickerTapeProps> = ({
           BINANCE SPOT
         </span>
         <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold">
-          API v3 AKTİF
+          PİYASA VERİSİ
         </span>
       </div>
 
@@ -74,3 +74,4 @@ export const MarketTickerTape: React.FC<MarketTickerTapeProps> = ({
     </div>
   );
 };
+

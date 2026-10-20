@@ -35,7 +35,7 @@ export const AlphaHackerTerminal: React.FC<AlphaHackerTerminalProps> = ({
   const [data, setData] = useState<AlphaScannerResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastScanTime, setLastScanTime] = useState<string>('');
-  const [autoPilotEnabled, setAutoPilotEnabled] = useState<boolean>(true);
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState<boolean>(false);
   const [scalpProfile, setScalpProfile] = useState<'FAST_SCALP' | 'INTRADAY_MOMENTUM' | 'BREAKOUT_WAVE'>('FAST_SCALP');
   const [deployedSymbols, setDeployedSymbols] = useState<Set<string>>(new Set());
 
@@ -50,6 +50,7 @@ export const AlphaHackerTerminal: React.FC<AlphaHackerTerminalProps> = ({
   }, [autoPilotEnabled]);
 
   const fetchAlphaData = async () => {
+    setData(null);
     setIsLoading(true);
     try {
       const res = await fetch('/api/ai/alpha-scanner', {
@@ -70,7 +71,7 @@ export const AlphaHackerTerminal: React.FC<AlphaHackerTerminalProps> = ({
         setLastScanTime(new Date().toLocaleTimeString('tr-TR'));
 
         // OTONOM İNİSİYATİF: En Yüksek Kârlı Alpha Fırsatını Matematiksel Olarak Sırala ve Otomatik Pozisyon Aç
-        if (autoPilotRef.current && Array.isArray(json.data.opportunities) && json.data.opportunities.length > 0) {
+        if (json.provenance?.verified === true && autoPilotRef.current && Array.isArray(json.data.opportunities) && json.data.opportunities.length > 0) {
           // Kâr potansiyeline (% beklenen getiri ve sentiment skoruna) göre azalan sırala
           const sortedByProfit = [...json.data.opportunities].sort((a: AlphaOpportunity, b: AlphaOpportunity) => {
             const retA = parseFloat((a.expectedReturnPercent || '0').replace(/[^0-9.]/g, '')) || 0;
@@ -103,12 +104,13 @@ export const AlphaHackerTerminal: React.FC<AlphaHackerTerminalProps> = ({
   }, []);
 
   const handleDeploy = (opp: AlphaOpportunity) => {
-    onAutoDeployAlphaBot(opp);
+    return; // Model suggestions are not verified executable opportunities.
     setDeployedSymbols(prev => new Set([...prev, opp.symbol]));
   };
 
   return (
     <div className="space-y-4">
+      <p role="status" className="rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-200">Model üretimi • Haber, balina hareketi veya zincir üstü doğrulama değildir. Otomatik bot kurulumu kapalıdır.</p>
       {/* Hacker Command Top Banner */}
       <div className="bg-[#080d17] rounded-lg border border-emerald-500/40 p-4 relative overflow-hidden shadow-lg shadow-emerald-950/30">
         <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
@@ -143,7 +145,7 @@ export const AlphaHackerTerminal: React.FC<AlphaHackerTerminalProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setAutoPilotEnabled(!autoPilotEnabled)}
+                disabled title="Model çıktısından otomatik işlem kapalı"
                 className={`px-2 py-0.5 rounded text-xs font-mono font-bold transition-colors ${
                   autoPilotEnabled 
                     ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30' 
@@ -386,3 +388,4 @@ export const AlphaHackerTerminal: React.FC<AlphaHackerTerminalProps> = ({
     </div>
   );
 };
+
