@@ -11,7 +11,12 @@ function rates(raw:any):Rates{
 export function normalizeCommission(raw:any,accountId:string,symbol:string,startedAt:number,observedAt:number):CommissionSnapshot{
  if(!raw||raw.symbol!==symbol||!/^testnet_[a-f0-9]{24}$/.test(accountId)||!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('COMMISSION_IDENTITY_MISMATCH');
  const d=raw.discount;
- if(!d||typeof d.enabledForAccount!=='boolean'||typeof d.enabledForSymbol!=='boolean'||typeof d.discountAsset!=='string'||!/^[A-Z0-9]{1,24}$/.test(d.discountAsset)||units(d.discount)>SCALE)throw Error('INVALID_COMMISSION_DISCOUNT');
+ if(!d||typeof d!=='object'||Array.isArray(d))throw Error('COMMISSION_DISCOUNT_MISSING');
+ if(typeof d.enabledForAccount!=='boolean'||typeof d.enabledForSymbol!=='boolean')throw Error('COMMISSION_DISCOUNT_FLAGS_INVALID');
+ if(typeof d.discountAsset!=='string')throw Error('COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
+ if(d.discountAsset==='')throw Error('COMMISSION_DISCOUNT_ASSET_EMPTY');
+ if(!/^[A-Z0-9]{1,24}$/.test(d.discountAsset))throw Error('COMMISSION_DISCOUNT_ASSET_UNSUPPORTED');
+ if(units(d.discount)>SCALE)throw Error('COMMISSION_DISCOUNT_RATE_UNSUPPORTED');
  const snapshot:CommissionSnapshot={environment:'BINANCE_TESTNET',accountId,symbol,startedAt,observedAt,source:'EXCHANGE_ACCOUNT_COMMISSION',standard:rates(raw.standardCommission),special:rates(raw.specialCommission),tax:rates(raw.taxCommission),discount:{enabledForAccount:d.enabledForAccount,enabledForSymbol:d.enabledForSymbol,discountAsset:d.discountAsset,discount:decimal(units(d.discount))}};
  commissionSummary(snapshot,accountId,symbol,observedAt);return snapshot;
 }

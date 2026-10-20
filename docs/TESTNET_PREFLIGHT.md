@@ -122,3 +122,15 @@ assets. The exact offending identifier was not disclosed by the operator.
 
 Pull and rerun `npm.cmd run testnet:preflight` in the same keyed PowerShell.
 Actual authenticated readiness remains unconfirmed until that result is returned.
+
+
+### Actual authenticated account confirmed; commission still blocked
+
+Operator run after 4802496 confirms account PASS/AUTHENTICATED_READ_CONFIRMED.
+Commission failed INVALID_COMMISSION_DISCOUNT; its exact rejected field is not
+known. Do not infer an invalid key or assume a discount asset/rate. Commission
+validation now reports separate allowlisted codes for absent metadata, invalid
+flags, missing/non-string/unsupported asset names, and unsupported rates. No raw
+response or private values are printed, and validation has not been relaxed.
+Pull and repeat preflight in the same keyed PowerShell to identify the field.
+No trading readiness or order submission has been confirmed.
