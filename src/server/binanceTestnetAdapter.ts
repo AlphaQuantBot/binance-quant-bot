@@ -19,7 +19,8 @@ function object(value: unknown): any {
 function normalize(raw: unknown, intent: Intent, clientOrderId: string): Confirmation {
   const r = object(raw);
   if (r.symbol !== intent.symbol || r.side !== intent.side || r.clientOrderId !== clientOrderId || !STATUSES.has(r.status) || units(r.origQty) !== units(intent.quantity)) throw Error('ORDER_IDENTITY_MISMATCH');
-  if(intent.limitPrice!==undefined&&(r.type!=='LIMIT'||r.timeInForce!=='IOC'||units(r.price)!==units(intent.limitPrice)))throw Error('ORDER_LIMIT_MISMATCH');
+  if(intent.limitPrice!==undefined&&(r.type!==(intent.stopPrice===undefined?'LIMIT':'STOP_LOSS_LIMIT')||r.timeInForce!==(intent.stopPrice===undefined?'IOC':'GTC')||units(r.price)!==units(intent.limitPrice)))throw Error('ORDER_LIMIT_MISMATCH');
+  if(intent.stopPrice!==undefined&&(units(r.stopPrice)!==units(intent.stopPrice)||r.orderListId!==-1||r.trailingDelta!==undefined))throw Error('STOP_IDENTITY_MISMATCH');
   const updateTime = r.updateTime ?? r.transactTime;
   if (!Number.isSafeInteger(updateTime) || updateTime < 0) throw Error('INVALID_EXCHANGE_TIME');
   const executed = units(r.executedQty), quote = units(r.cummulativeQuoteQty), requested = units(intent.quantity);
@@ -37,6 +38,7 @@ export function createBinanceTestnetAdapter(options: {
   const accountId = testnetAccountId(apiKey);
   let blockedUntil = 0;
   function validateIntent(i: Intent, clientId: string) {
+    if(i.stopPrice!==undefined&&(i.side!=='SELL'||units(i.stopPrice)<=0n||!i.limitPrice||units(i.limitPrice)>units(i.stopPrice)))throw Error('INVALID_PROTECTIVE_STOP');
     if (i.accountId !== accountId) throw Error('TESTNET_ACCOUNT_MISMATCH');
     if (!/^[A-Z0-9]{5,24}$/.test(i.symbol) || !['BUY','SELL'].includes(i.side) || !/^aq_[a-f0-9]{32}$/.test(clientId) || units(i.quantity) <= 0n) throw Error('INVALID_ORDER_REQUEST');
   }
@@ -135,7 +137,7 @@ export function createBinanceTestnetAdapter(options: {
     async submit(intent, clientId) {
       validateIntent(intent, clientId);
       if(!intent.limitPrice||units(intent.limitPrice)<=0n)throw Error('BOUNDED_LIMIT_REQUIRED');
-      const raw = await request('POST', '/api/v3/order', {symbol:intent.symbol, side:intent.side, type:'LIMIT',timeInForce:'IOC',price:intent.limitPrice, quantity:intent.quantity, newClientOrderId:clientId, newOrderRespType:'FULL'});
+      const raw = await request('POST', '/api/v3/order', {symbol:intent.symbol, side:intent.side, type:intent.stopPrice===undefined?'LIMIT':'STOP_LOSS_LIMIT',timeInForce:intent.stopPrice===undefined?'IOC':'GTC',...(intent.stopPrice===undefined?{}:{stopPrice:intent.stopPrice}),price:intent.limitPrice, quantity:intent.quantity, newClientOrderId:clientId, newOrderRespType:'FULL'});
       // An ACK or FULL response without complete validated totals stays UNKNOWN in the journal.
       return normalize(raw, intent, clientId);
     },

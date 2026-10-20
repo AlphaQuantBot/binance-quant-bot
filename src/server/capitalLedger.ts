@@ -6,7 +6,7 @@ import { accountDiscrepancies, validateAccountSnapshot, type AccountSnapshot } f
 import type { Intent, Record as OrderRecord } from './orderExecution';
 export type Debit = {asset:string; amount:string};
 type Hold = {intent:Intent; debits:Debit[]; settled:boolean};
-function identity(i:Intent) { return JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice])]); }
+function identity(i:Intent) { if(i.stopPrice!==undefined)throw Error('PROTECTIVE_STOP_REQUIRES_SEPARATE_RISK_GATE'); return JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice])]); }
 function normalizeDebits(debits: Debit[]): Debit[] {
   if (!Array.isArray(debits) || !debits.length || debits.length > 10) throw Error('INVALID_FUNDING_REQUIREMENT');
   const result = new Map<string,bigint>();

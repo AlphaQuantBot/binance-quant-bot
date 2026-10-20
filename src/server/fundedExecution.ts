@@ -41,6 +41,7 @@ export class FundedExecution {
     } finally {this.busy=false;}
   }
   async submit(intent:Intent,plan:FundingPlan) {
+    if(intent.stopPrice!==undefined)throw Error('PROTECTIVE_STOP_REQUIRES_SEPARATE_RISK_GATE');
     if(this.busy)throw Error('FUNDED_EXECUTION_BUSY');
     intent=structuredClone(intent);plan=structuredClone(plan);
     if(intent.accountId!==this.accountId)throw Error('CAPITAL_ACCOUNT_MISMATCH');

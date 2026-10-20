@@ -75,3 +75,30 @@ and supported static stops. It is not a persistent protection badge or permissio
 to submit orders. No testnet credentials are present in this development session:
 fixture tests verify the failure paths, while an actual configured testnet run
 remains required before progressing to operational stop management.
+
+## Durable stop-limit submission foundation
+
+The internal testnet adapter and order journal now support a static SELL
+`STOP_LOSS_LIMIT` intent through `stopPrice` plus the existing `limitPrice`.
+The adapter uses GTC, never IOC for a protective stop, and validates the returned
+order type, trigger, limit, standalone order-list identity and absence of trailing
+parameters. Quantity and cumulative execution/fee reconciliation use the existing
+exact accounting checks. The trigger is part of the durable client-ID fingerprint;
+changing it under the same request ID is an idempotency conflict. Existing IOC
+intent fingerprints are unchanged.
+
+The journal persists before submission. A timeout or unconfirmed reply remains
+UNKNOWN across restart; reconciliation queries the original client ID and never
+resubmits merely because a query returns no order. No cancel or replacement logic
+is enabled. There is no browser/HTTP/CLI submission path for these new intents.
+The funded IOC coordinator and its capital ledger explicitly reject protective
+stop intents until a dedicated position, filter, budget and lifecycle gate exists.
+Calling the low-level adapter directly is not a readiness check and is not an
+operator workflow. Its testnet host is fixed; production execution remains paused.
+
+Fixture integration tests cover the signed stop-limit request, timeout, restart,
+query recovery, repeat requests, trigger conflicts and malformed exchange replies.
+An actual exchange run, exchange rule checks for conditional orders, position
+reservation, cancel acknowledgement, partial-fill handling during replacement,
+and recovery of ambiguous cancellation are still required before enabling stop
+management. No claim of complete stage-two readiness is made.

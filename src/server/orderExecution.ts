@@ -4,17 +4,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 export type Status = 'SUBMITTING'|'UNKNOWN'|'NEW'|'PARTIALLY_FILLED'|'FILLED'|'CANCELED'|'REJECTED'|'EXPIRED'|'EXPIRED_IN_MATCH';
-export type Intent = {requestId:string; accountId:string; symbol:string; side:'BUY'|'SELL'; quantity:string;limitPrice?:string};
+export type Intent = {requestId:string; accountId:string; symbol:string; side:'BUY'|'SELL'; quantity:string;limitPrice?:string; stopPrice?:string};
 export type Confirmation = {clientOrderId:string; symbol:string; side:'BUY'|'SELL'; status:Status; orderId:string; executedQty:string; quoteQty:string; updateTime:number; settlement?:Settlement};
 export type Record = Intent & {clientOrderId:string; status:Status; confirmation?:Confirmation};
 export interface Adapter { submit(intent:Intent, clientId:string):Promise<Confirmation>; query(intent:Intent, clientId:string):Promise<Confirmation|null> }
 const states = ['NEW','PARTIALLY_FILLED','FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
 const terminal = ['FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
 function validate(i:Intent) {
+  if(i.stopPrice!==undefined&&(i.side!=='SELL'||amount(i.stopPrice)<=0n||i.limitPrice===undefined||amount(i.limitPrice)>amount(i.stopPrice)))throw Error('INVALID_PROTECTIVE_STOP');
   if(i.limitPrice!==undefined&&amount(i.limitPrice)<=0n)throw Error('INVALID_LIMIT_PRICE');
   if(!/^[\w-]{8,80}$/.test(i.requestId)||!/^[\w-]{1,80}$/.test(i.accountId)||!/^[A-Z0-9]{5,24}$/.test(i.symbol)||!['BUY','SELL'].includes(i.side)||amount(i.quantity)<=0n)throw Error('INVALID_INTENT');
 }
-const fingerprint=(i:Intent)=>JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice])]);
+const fingerprint=(i:Intent)=>JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice]),...(i.stopPrice===undefined?[]:['STOP_LOSS_LIMIT',i.stopPrice])]);
 const clientId=(i:Intent)=>'aq_'+createHash('sha256').update(fingerprint(i)).digest('hex').slice(0,32);
 /** Single operator/process journal; stale locks require manual recovery. No exchange adapter is enabled. */
 export class OrderExecution {
@@ -67,7 +68,7 @@ export class OrderExecution {
     r.confirmation=structuredClone(e);r.status=e.status;this.persist();
   }
   async submit(i:Intent){
-    this.open();validate(i);i={requestId:i.requestId,accountId:i.accountId,symbol:i.symbol,side:i.side,quantity:i.quantity,...(i.limitPrice===undefined?{}:{limitPrice:i.limitPrice})};const prev=this.rows.find(r=>r.requestId===i.requestId);
+    this.open();validate(i);i={requestId:i.requestId,accountId:i.accountId,symbol:i.symbol,side:i.side,quantity:i.quantity,...(i.limitPrice===undefined?{}:{limitPrice:i.limitPrice}),...(i.stopPrice===undefined?{}:{stopPrice:i.stopPrice})};const prev=this.rows.find(r=>r.requestId===i.requestId);
     if(prev){if(fingerprint(prev)!==fingerprint(i))throw Error('IDEMPOTENCY_CONFLICT');return structuredClone(prev);}
     if(this.rows.some(r=>r.accountId===i.accountId&&['SUBMITTING','UNKNOWN'].includes(r.status)))throw Error('RECONCILIATION_REQUIRED');
     const r:Record={...i,clientOrderId:clientId(i),status:'SUBMITTING'};this.rows.push(r);
