@@ -34,7 +34,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter & { valuationMarks(assets:string[]):Promise<ValuationMark[]>; accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
+}): Adapter & { validateTestOrder(intent:Intent,clientOrderId:string):Promise<void>; valuationMarks(assets:string[]):Promise<ValuationMark[]>; accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -157,6 +157,14 @@ export function createBinanceTestnetAdapter(options: {
       const snapshot: AccountSnapshot = {environment:'BINANCE_TESTNET',accountId,startedAt,observedAt:now(),...lastAccount,openOrders:lastOrders};
       validateAccountSnapshot(snapshot, accountId, now());
       return snapshot;
+    },
+    async validateTestOrder(intent,clientId){
+      validateIntent(intent,clientId);
+      if(intent.symbol!=='BTCUSDT'||intent.side!=='BUY'||intent.stopPrice!==undefined||!intent.limitPrice||units(intent.limitPrice)<=0n)throw Error('INVALID_SANDBOX_TEST_ORDER');
+      const notional=(units(intent.quantity)*units(intent.limitPrice)+(10n**18n)-1n)/(10n**18n);
+      if(notional>25n*(10n**18n))throw Error('SANDBOX_ORDER_CAP_EXCEEDED');
+      const raw=object(await request('POST','/api/v3/order/test',{symbol:'BTCUSDT',side:'BUY',type:'LIMIT',timeInForce:'IOC',price:intent.limitPrice,quantity:intent.quantity,newClientOrderId:clientId}));
+      if(Object.keys(raw).length)throw Error('ORDER_TEST_RESPONSE_UNCONFIRMED');
     },
     async submit(intent, clientId) {
       validateIntent(intent, clientId);
