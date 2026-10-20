@@ -39,3 +39,39 @@ https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/res
 https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/rest-api/trade
 
 Validation uses synthetic fixtures only; no exchange credentials or live requests.
+
+## Position-to-stop reconciliation
+
+`npm run testnet:positions` adds a whole-account inventory check around the
+single-order observation. Set `APP_TESTNET_POSITION_PLAN` to a JSON plan:
+
+```json
+{
+  "accountId": "testnet_<API-key fingerprint reported by testnet:account>",
+  "cashAssets": ["USDT"],
+  "positions": [{
+    "positionId": "strategy-position-1",
+    "baseAsset": "BTC",
+    "quoteAsset": "USDT",
+    "stop": {"symbol":"BTCUSDT","orderId":"12","clientOrderId":"stop-12","quantity":"0.001","stopPrice":"50000"}
+  }]
+}
+```
+
+The plan is operator classification, not proof of entry cost or bot ownership.
+Cash exclusions must be deliberately reviewed: excluded assets are not claimed to
+be protected positions. Every nonzero, non-excluded holding must be classified;
+quantities for multiple positions sharing a base asset are added exactly and must
+match free plus locked holdings. Each position has its own unique stop ID and
+client ID; stops cannot be reused. Exact stop quantities prevent an oversized
+order from receiving a positive result. Every bound stop must also appear in the
+account's open-order snapshot, and unbound open orders block coverage. The account
+is read before and after the individual audits; changes or a total window over ten
+seconds invalidate the result. These are sequential REST observations, not an
+atomic exchange snapshot; changes between identical observations remain possible.
+
+`coverageObserved` describes only this read window, the declared cash exclusions,
+and supported static stops. It is not a persistent protection badge or permission
+to submit orders. No testnet credentials are present in this development session:
+fixture tests verify the failure paths, while an actual configured testnet run
+remains required before progressing to operational stop management.
