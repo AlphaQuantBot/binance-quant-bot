@@ -6,7 +6,7 @@ import { accountDiscrepancies, validateAccountSnapshot, type AccountSnapshot } f
 import type { Intent, Record as OrderRecord } from './orderExecution';
 export type Debit = {asset:string; amount:string};
 type Hold = {intent:Intent; debits:Debit[]; settled:boolean};
-function identity(i:Intent) { if(i.stopPrice!==undefined)throw Error('PROTECTIVE_STOP_REQUIRES_SEPARATE_RISK_GATE'); return JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice])]); }
+function identity(i:Intent) { return JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice]),...(i.stopPrice===undefined?[]:['STOP_LOSS_LIMIT',i.stopPrice])]); }
 function normalizeDebits(debits: Debit[]): Debit[] {
   if (!Array.isArray(debits) || !debits.length || debits.length > 10) throw Error('INVALID_FUNDING_REQUIREMENT');
   const result = new Map<string,bigint>();
@@ -23,7 +23,7 @@ export class CapitalLedger {
   private closed = false;
   private released = false;
   private fd:number;
-  constructor(private file:string, private accountId:string, private now:()=>number=Date.now) {
+  constructor(private file:string, private accountId:string, private now:()=>number=Date.now, private allowProtectiveStops=false) {
     if(typeof accountId!=='string'||!/^[\w-]{1,80}$/.test(accountId))throw Error('INVALID_CAPITAL_ACCOUNT');
     fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
     this.fd=fs.openSync(file+'.lock','wx',0o600);
@@ -34,7 +34,7 @@ export class CapitalLedger {
         const seen = new Set<string>();
         this.holds = data.holds.map((h:Hold) => {
           if (!h?.intent || h.intent.accountId !== accountId || typeof h.settled !== 'boolean' || seen.has(h.intent.requestId)) throw Error('INVALID_CAPITAL_JOURNAL');
-          validateFundingIntent(h.intent); seen.add(h.intent.requestId);
+          validateFundingIntent(h.intent,this.allowProtectiveStops); seen.add(h.intent.requestId);
           return {intent:h.intent,debits:normalizeDebits(h.debits),settled:h.settled};
         });
       }
@@ -76,17 +76,18 @@ export class CapitalLedger {
     return decimal(available);
   }
   reserve(intent:Intent,debits:Debit[]) {
-    this.open();validateFundingIntent(intent);
+    this.open();validateFundingIntent(intent,this.allowProtectiveStops);
     if(intent.accountId!==this.accountId)throw Error('CAPITAL_ACCOUNT_MISMATCH');
     const normalized=normalizeDebits(debits), prev=this.holds.find(h=>h.intent.requestId===intent.requestId);
     if(prev){if(identity(prev.intent)!==identity(intent)||JSON.stringify(prev.debits)!==JSON.stringify(normalized))throw Error('RESERVATION_CONFLICT');return structuredClone(prev);}
     for(const debit of normalized)if(units(debit.amount)>units(this.available(debit.asset)))throw Error('INSUFFICIENT_AVAILABLE_CAPITAL');
-    const hold:Hold={intent:{requestId:intent.requestId,accountId:intent.accountId,symbol:intent.symbol,side:intent.side,quantity:intent.quantity,...(intent.limitPrice===undefined?{}:{limitPrice:intent.limitPrice})},debits:normalized,settled:false};
+    const hold:Hold={intent:{requestId:intent.requestId,accountId:intent.accountId,symbol:intent.symbol,side:intent.side,quantity:intent.quantity,...(intent.limitPrice===undefined?{}:{limitPrice:intent.limitPrice}),...(intent.stopPrice===undefined?{}:{stopPrice:intent.stopPrice})},debits:normalized,settled:false};
     this.holds.push(hold);this.persist();return structuredClone(hold);
   }
   close() {if(this.released)return;this.closed=true;this.snapshot=undefined;fs.closeSync(this.fd);fs.unlinkSync(this.file+'.lock');this.released=true;}
 }
-export function validateFundingIntent(i:Intent) {
+export function validateFundingIntent(i:Intent,allowProtectiveStops=false) {
+  if(i?.stopPrice!==undefined){if(!allowProtectiveStops)throw Error('PROTECTIVE_STOP_REQUIRES_SEPARATE_RISK_GATE');if(i.side!=='SELL'||units(i.stopPrice)<=0n||!i.limitPrice||units(i.limitPrice)>units(i.stopPrice))throw Error('INVALID_PROTECTIVE_STOP');}
   if(i?.limitPrice!==undefined&&units(i.limitPrice)<=0n)throw Error('INVALID_LIMIT_PRICE');
   if (!i || typeof i.requestId!=='string' || !/^[\w-]{8,80}$/.test(i.requestId) || typeof i.accountId!=='string' || !/^[\w-]{1,80}$/.test(i.accountId) || !/^[A-Z0-9]{5,24}$/.test(i.symbol) || !['BUY','SELL'].includes(i.side) || units(i.quantity)<=0n) throw Error('INVALID_FUNDING_INTENT');
 }

@@ -23,7 +23,7 @@ export class FundedExecution {
   constructor(orderFile:string,capitalFile:string,private accountId:string,private adapter:AccountAdapter,private now:()=>number=Date.now,private policy?:RiskPolicy) {
     this.orders=new OrderExecution(orderFile,{
       submit:adapter.submit.bind(adapter),
-      query:async(i,id)=>{const result=await adapter.query(i,id);if(!result)throw Error('ORDER_NOT_FOUND_ON_EXCHANGE');return result;},
+      query:async(i,id,cancellation)=>{const result=await adapter.query(i,id,cancellation);if(!result)throw Error('ORDER_NOT_FOUND_ON_EXCHANGE');return result;},
     });
     try{this.capital=new CapitalLedger(capitalFile,accountId,now);}catch(e){this.orders.close();throw e;}
     try{this.daily=new DailyRiskGate(capitalFile+'.daily-risk',accountId);}catch(e){this.capital.close();this.orders.close();throw e;}

@@ -1,0 +1,30 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {OrderExecution,type Intent,type Confirmation} from '../src/server/orderExecution';
+import {ProtectiveReplacementExecution} from '../src/server/protectiveReplacementExecution';
+import {CapitalLedger} from '../src/server/capitalLedger';
+import {rulesFixture,policyFixture,dailyEvidenceFixture} from './fixtures/trading';
+import type {AccountSnapshot} from '../src/server/accountSnapshot';
+const prior:Intent={accountId:'account1',requestId:'old_stop_001',symbol:'BTCUSDT',side:'SELL',quantity:'2',stopPrice:'90',limitPrice:'89'};
+const request={previousRequestId:prior.requestId,requestId:'new_stop_002',stopPrice:'95',limitPrice:'94'};
+const conf=(id:string,status:'NEW'|'CANCELED'='NEW'):Confirmation=>({clientOrderId:id,orderId:'12',symbol:'BTCUSDT',side:'SELL',status,executedQty:'0',quoteQty:'0',updateTime:999,settlement:{trades:[],fees:[]}});
+async function fixture(run:(f:Awaited<ReturnType<typeof setup>>)=>Promise<void>){const f=await setup();try{await run(f);}finally{f.close();fs.rmSync(f.dir,{recursive:true,force:true});}}
+async function setup(){
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'funded-stop-')),orderFile=path.join(dir,'orders.json'),capitalFile=path.join(dir,'capital.json');let cid='';
+ const seed=new OrderExecution(orderFile,{submit:async(i,id)=>{cid=id;return conf(id);},cancel:async()=>{},query:async()=>conf(cid,'CANCELED')});await seed.submit(prior);await seed.cancelStop(prior.requestId);seed.close();
+ let sends=0,unknown=false,changed=false;let engine:ProtectiveReplacementExecution|undefined;
+ const snapshot=():AccountSnapshot=>({environment:'BINANCE_TESTNET',accountId:'account1',startedAt:1000,observedAt:1001,canTrade:true,balances:[{asset:'BTC',free:changed?'1':'2',locked:'0'},{asset:'USDT',free:'1000',locked:'0'}],openOrders:[]});
+ const adapter={submit:async(i:Intent,id:string)=>{sends++;const hold=JSON.parse(fs.readFileSync(capitalFile,'utf8')).holds[0];assert.equal(hold.intent.stopPrice,'95');assert.equal(hold.debits.find((d:any)=>d.asset==='BTC').amount,'2');if(unknown)throw Error('timeout');return {...conf(id),orderId:'13'};},query:async(i:Intent,id:string)=>i.requestId===prior.requestId?conf(id,'CANCELED'):null,accountSnapshot:async()=>snapshot(),tradeContext:async()=>{const c=rulesFixture();c.orderTypes.push('STOP_LOSS_LIMIT');return c;},dailyRiskEvidence:async(s:AccountSnapshot)=>dailyEvidenceFixture(s),stopFeeEvidence:async()=>({environment:'BINANCE_TESTNET' as const,accountId:'account1',symbol:'BTCUSDT',source:'SERVER_COMMISSION_RESERVE' as const,observedAt:1002,debits:[{asset:'USDT',amount:'0.18'}]})};
+ return {dir,orderFile,capitalFile,adapter,snapshot,get sends(){return sends;},set unknown(v:boolean){unknown=v;},set changed(v:boolean){changed=v;},open(){engine=new ProtectiveReplacementExecution(orderFile,capitalFile,'account1',adapter,policyFixture(),()=>1002);return engine;},close(){if(engine){engine.close();engine=undefined;}}};
+}
+test('dedicated coordinator persists principal and fees before one replacement send',()=>fixture(async f=>{const e=f.open();const r=await e.replace(request);assert.equal('state' in r,false);assert.equal('status' in r&&r.status,'NEW');assert.equal(f.sends,1);await assert.rejects(e.replace(request),/EXISTING_REPLACEMENT_RECONCILE_ONLY/);assert.equal(f.sends,1);}));
+test('ambiguous replacement and capital reservation survive restart without resend',()=>fixture(async f=>{f.unknown=true;let e=f.open();const r=await e.replace(request);assert.equal('status' in r&&r.status,'UNKNOWN');f.close();e=f.open();await assert.rejects(e.replace(request),/EXISTING_REPLACEMENT_RECONCILE_ONLY/);await assert.rejects(e.replace({...request,requestId:'new_stop_003'}),/ORDER_NOT_FOUND/);assert.equal(f.sends,1);}));
+test('missing trusted providers block before any submission',()=>fixture(async f=>{(f.adapter as any).dailyRiskEvidence=undefined;const e=f.open();await assert.rejects(e.replace(request),/PROTECTIVE_RISK_PROVIDERS_REQUIRED/);assert.equal(f.sends,0);}));
+test('fee shortfall and changed account prevent reservation and send',()=>fixture(async f=>{f.adapter.stopFeeEvidence=async()=>({environment:'BINANCE_TESTNET',accountId:'account1',symbol:'BTCUSDT',source:'SERVER_COMMISSION_RESERVE',observedAt:1002,debits:[{asset:'USDT',amount:'1001'}]});const e=f.open();await assert.rejects(e.replace(request),/INSUFFICIENT_AVAILABLE_CAPITAL/);assert.equal(f.sends,0);assert.equal(fs.existsSync(f.capitalFile)&&JSON.parse(fs.readFileSync(f.capitalFile,'utf8')).holds.length,0);}));
+test('balance changes during fee retrieval fail closed',()=>fixture(async f=>{const original=f.adapter.stopFeeEvidence;f.adapter.stopFeeEvidence=async()=>{f.changed=true;return original();};const e=f.open();await assert.rejects(e.replace(request),/ACCOUNT_CHANGED_DURING_REPLACEMENT/);assert.equal(f.sends,0);}));
+test('persistent emergency halt blocks replacement after restart',()=>fixture(async f=>{let e=f.open();e.emergencyHalt();f.close();e=f.open();await assert.rejects(e.replace(request),/PERSISTENT_EMERGENCY_HALT/);assert.equal(f.sends,0);}));
+test('default capital ledger continues rejecting protective stop reservations',()=>fixture(async f=>{const l=new CapitalLedger(f.capitalFile,'account1',()=>1002);try{assert.equal(l.reconcile(f.snapshot(),[]).ready,true);assert.throws(()=>l.reserve(prior,[{asset:'BTC',amount:'2'}]),/PROTECTIVE_STOP_REQUIRES_SEPARATE_RISK_GATE/);}finally{l.close();}}));
+test('stale fee evidence and incomplete daily account evidence block sends',()=>fixture(async f=>{const fee=f.adapter.stopFeeEvidence;f.adapter.stopFeeEvidence=async()=>({...await fee(),observedAt:-1000});const e=f.open();await assert.rejects(e.replace(request),/STOP_FEE_RESERVE_REQUIRED/);f.adapter.stopFeeEvidence=fee;const daily=f.adapter.dailyRiskEvidence;f.adapter.dailyRiskEvidence=async(s)=>({...await daily(s),balanceDigest:'wrong'});await assert.rejects(e.replace(request),/FULL_DAY_RISK_EVIDENCE_REQUIRED/);assert.equal(f.sends,0);}));

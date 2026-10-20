@@ -167,3 +167,39 @@ replacement. Automatic orchestration remains disabled; actual testnet verificati
 and those gates are required before enabling it. Fixture tests verify the math,
 partial/full fills, fee assets, dust and failure cases; no real testnet run has
 been performed in this session.
+
+## Reserved replacement coordinator (internal, not enabled)
+
+`ProtectiveReplacementExecution` combines the proposal with durable capital
+reservation, full-account daily risk evidence and a server-owned commission
+reserve provider. It reconciles retained orders, checks the previous account and
+terminal stop binding, obtains a fresh post-fee account snapshot, rejects changed
+balances/open orders, assesses risk and revalidates the proposal immediately
+before reserving principal plus fee debits. Reservation is persisted before the
+one submission attempt. Ambiguous sends retain both the order and reservation;
+existing request IDs are reconciliation-only and never sent again. Orphan holds,
+unknown orders and capital conflicts block further work. Reconciled exchange free
+balances are never double-debited for already reflected holds.
+
+The capital ledger only accepts protective intents when constructed explicitly
+for this coordinator; ordinary funded IOC paths continue rejecting them. Existing
+IOC fingerprints are preserved. Protective stop fields are persisted in holds.
+The funded query wrapper also forwards cancellation identity context so reads of
+retained stop cancellations can reconcile their deterministic terminal aliases.
+
+The daily loss entry latch permits reducing SELL protection, but the persistent
+emergency halt blocks it. Closed-position proposals perform no exchange write.
+The commission provider contract is `SERVER_COMMISSION_RESERVE`, with account,
+symbol, observation time and positive native-asset debits. It is a trusted internal
+contract, not a signature or a value to accept from a browser. No real commission
+reserve provider or full-day historian/valuator is implemented in the actual
+adapter yet; that adapter therefore cannot pass the coordinator's mandatory
+provider checks. Base-asset commission reserves must also fit free balances; a
+full-balance stop without enough base fee allowance is refused, not oversold.
+
+No HTTP, browser, CLI sender or automatic cancellation/replacement loop is wired.
+This is an internal foundation verified with fixture providers, not operational
+readiness. Full execution-rule checks, correct commission-rate production, durable
+worker scheduling/ownership and actual testnet validation remain outstanding.
+All coordinators must share the same account journals to enforce their process
+locks; separate arbitrarily named journals do not provide account-wide exclusion.
