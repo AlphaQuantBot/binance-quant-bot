@@ -1,3 +1,4 @@
+import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
 import { referenceForFilter, type PriceReference } from './priceReference';
 import { validateTradeContext, type TradeContext } from './tradingRules';
 import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
@@ -31,7 +32,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown> } {
+}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -71,6 +72,12 @@ export function createBinanceTestnetAdapter(options: {
     return body;
   }
   return {
+    async commissionRates(symbol) {
+      if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
+      const startedAt=now();
+      const raw=await request('GET','/api/v3/account/commission',{symbol});
+      return normalizeCommission(raw,accountId,symbol,startedAt,now());
+    },
     async protectionOrder(symbol, orderId) {
       if(!/^[A-Z0-9]{5,24}$/.test(symbol)||id(orderId)!==orderId)throw Error('INVALID_PROTECTION_TARGET');
       return request('GET','/api/v3/order',{symbol,orderId},true);
