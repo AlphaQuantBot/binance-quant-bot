@@ -1,3 +1,4 @@
+import {normalizeValuationMarks,type ValuationMark} from './valuationMarks';
 import {backfillTrades,type TradeHistoryWindow} from './tradeBackfill';
 import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
 import { referenceForFilter, type PriceReference } from './priceReference';
@@ -33,7 +34,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
+}): Adapter & { valuationMarks(assets:string[]):Promise<ValuationMark[]>; accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -76,6 +77,14 @@ export function createBinanceTestnetAdapter(options: {
   return {
     async tradeHistory(symbol,startTime,endTime){
       return backfillTrades(params=>request('GET','/api/v3/myTrades',params),accountId,symbol,startTime,endTime,now);
+    },
+    async valuationMarks(assets){
+      if(!Array.isArray(assets)||assets.length>10000||new Set(assets).size!==assets.length)throw Error('INVALID_VALUATION_ASSETS');
+      normalizeBalances(assets.map(asset=>({asset,free:'0',locked:'0'})));
+      const info=await request('GET','/api/v3/exchangeInfo',{},false,false);
+      const startedAt=now();
+      const tickers=await request('GET','/api/v3/ticker/bookTicker',{},false,false);
+      return normalizeValuationMarks(info,tickers,assets,startedAt,now());
     },
     async commissionRates(symbol) {
       if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');

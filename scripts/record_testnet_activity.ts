@@ -17,7 +17,7 @@ async function main(){
   for(const r of orders.list())await orders.reconcile(r.requestId);
   const pairs=[];for(const symbol of new Set(orders.list().map(r=>r.symbol))){const c=await a.tradeContext(symbol);pairs.push({symbol,baseAsset:c.baseAsset,quoteAsset:c.quoteAsset});}
   const first=activityFromOrders(orders.list(),pairs,accountId);
-  const sample=await valueAccount({accountSnapshot:a.accountSnapshot,tradeContext:a.tradeContext},accountId);
+  const sample=await valueAccount({accountSnapshot:a.accountSnapshot,tradeContext:a.tradeContext,valuationMarks:a.valuationMarks},accountId);
   for(const r of orders.list())await orders.reconcile(r.requestId);
   const latest=activityFromOrders(orders.list(),pairs,accountId);
   if(JSON.stringify(first)!==JSON.stringify(latest))throw Error('ACTIVITY_CHANGED_DURING_OBSERVATION');

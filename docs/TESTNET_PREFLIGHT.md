@@ -189,3 +189,12 @@ This removes an unnecessary write from the first read-only audit; it does not
 claim general Windows durable-write support. Safe diagnostics also include a
 fixed allowlisted syscall name if present, never filesystem paths. Pull and
 repeat testnet:account; real success remains to be confirmed on Windows.
+
+
+### Account audit confirmed; bulk valuation next
+
+Operator a13fc51 run confirmed READ_ONLY_ACCOUNT_AUDIT ready=true, problems=[],
+openOrders=[]. The Windows empty-ledger audit succeeded. No exchange order was
+sent. Bulk valuation now reads market metadata and books in two public GETs;
+all nonzero holdings remain represented and unpriced/stale holdings block total.
+See ACCOUNT_VALUATION.md. Next actual operator command: testnet:valuation.

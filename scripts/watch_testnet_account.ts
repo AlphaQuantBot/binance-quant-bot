@@ -25,7 +25,7 @@ async function main(){
   for(let cycle=1;!stop.signal.aborted&&(cycles===0||cycle<=cycles);cycle++){
    let observation:unknown={state:'VALUATION_UNCONFIRMED'};
    let sample:Awaited<ReturnType<typeof valueAccount>>|undefined;
-   try{sample=await valueAccount({accountSnapshot:a.accountSnapshot,tradeContext:a.tradeContext},accountId);}catch{if(stop.signal.aborted)break;}
+   try{sample=await valueAccount({accountSnapshot:a.accountSnapshot,tradeContext:a.tradeContext,valuationMarks:a.valuationMarks},accountId);}catch{if(stop.signal.aborted)break;}
    if(sample?.complete){observation=history.record(sample);intervals.capture(sample);}else process.exitCode=1;
    if(stop.signal.aborted)break;
    const intervalReport=await intervals.work();
