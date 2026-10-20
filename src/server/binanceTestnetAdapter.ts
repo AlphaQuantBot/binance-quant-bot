@@ -1,3 +1,4 @@
+import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
 import { createHash, createHmac } from 'node:crypto';
 import type { Adapter, Intent, Confirmation, Status } from './orderExecution';
 import { units } from './exactDecimal';
@@ -26,7 +27,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter {
+}): Adapter & { accountSnapshot(): Promise<AccountSnapshot> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -64,6 +65,29 @@ export function createBinanceTestnetAdapter(options: {
     return body;
   }
   return {
+    async accountSnapshot() {
+      const startedAt = now();
+      async function readAccount() {
+        const raw = object(await request('GET', '/api/v3/account', {omitZeroBalances:'false'}));
+        if (typeof raw.canTrade !== 'boolean' || raw.accountType !== 'SPOT' || !Array.isArray(raw.permissions) || !raw.permissions.includes('SPOT')) throw Error('INVALID_SPOT_ACCOUNT');
+        return {canTrade:raw.canTrade, balances:normalizeBalances(raw.balances)};
+      }
+      async function readOrders(): Promise<OpenOrder[]> {
+        // No symbol filter: include manual and other-bot orders on the whole account.
+        const raw = await request('GET', '/api/v3/openOrders', {});
+        if (!Array.isArray(raw)) throw Error('INVALID_OPEN_ORDERS');
+        return raw.map(r => {
+          r = object(r);
+          return {clientOrderId:r.clientOrderId, orderId:id(r.orderId), symbol:r.symbol, side:r.side, status:r.status, quantity:r.origQty, executedQty:r.executedQty};
+        }).sort((a,b) => (a.symbol + ':' + a.orderId).localeCompare(b.symbol + ':' + b.orderId));
+      }
+      const firstAccount = await readAccount(), firstOrders = await readOrders();
+      const lastAccount = await readAccount(), lastOrders = await readOrders();
+      if (JSON.stringify(firstAccount) !== JSON.stringify(lastAccount) || JSON.stringify(firstOrders) !== JSON.stringify(lastOrders)) throw Error('ACCOUNT_CHANGED_DURING_READ');
+      const snapshot: AccountSnapshot = {environment:'BINANCE_TESTNET',accountId,startedAt,observedAt:now(),...lastAccount,openOrders:lastOrders};
+      validateAccountSnapshot(snapshot, accountId, now());
+      return snapshot;
+    },
     async submit(intent, clientId) {
       validateIntent(intent, clientId);
       const raw = await request('POST', '/api/v3/order', {symbol:intent.symbol, side:intent.side, type:'MARKET', quantity:intent.quantity, newClientOrderId:clientId, newOrderRespType:'FULL'});

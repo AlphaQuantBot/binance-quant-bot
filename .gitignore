@@ -22,3 +22,5 @@ coverage/
 .order_journal.json*
 
 .testnet_order_journal.json*
+
+.testnet_capital_journal.json*

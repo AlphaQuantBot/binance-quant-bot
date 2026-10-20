@@ -76,3 +76,20 @@ test('journal rejects inconsistent settlement and later mutation of already conf
 test('429/418 cooldown prevents further calls until provider retry interval expires',async()=>{
  for(const status of [429,418]){let calls=0,now=1000;const a=createBinanceTestnetAdapter({apiKey,secretKey,now:()=>now,fetcher:async()=>{calls++;return new Response('{}',{status,headers:{'Retry-After':'120'}});}});await assert.rejects(a.query(intent,cid),/COOLDOWN/);await assert.rejects(a.submit(intent,cid),/COOLDOWN/);assert.equal(calls,1);now+=120000;await assert.rejects(a.query(intent,cid),/COOLDOWN/);assert.equal(calls,2);}
 });
+const accountResponse=(patch:object={})=>({canTrade:true,accountType:'SPOT',permissions:['SPOT'],balances:[{asset:'USDT',free:'100.00000000',locked:'20.00000000'},{asset:'BTC',free:'1',locked:'0'}],...patch});
+const openResponse=(patch:object={})=>({clientOrderId:'manual_order',orderId:999,symbol:'ETHUSDT',side:'BUY',status:'NEW',origQty:'2',executedQty:'0',...patch});
+test('account snapshot reads whole-account balances and open orders twice, never submits',async()=>{
+ const paths:string[]=[];const a=adapter(async(url,init)=>{const u=new URL(String(url));paths.push(u.pathname);assert.equal(init?.method,'GET');assert.equal(u.searchParams.has('symbol'),false);if(u.pathname==='/api/v3/account'){assert.equal(u.searchParams.get('omitZeroBalances'),'false');return json(accountResponse());}return json([openResponse()]);});
+ const result=await a.accountSnapshot();assert.equal(result.accountId,intent.accountId);assert.equal(result.environment,'BINANCE_TESTNET');assert.deepEqual(paths,['/api/v3/account','/api/v3/openOrders','/api/v3/account','/api/v3/openOrders']);assert.deepEqual(result.balances[1],{asset:'USDT',free:'100',locked:'20'});assert.equal(result.openOrders[0].clientOrderId,'manual_order');
+});
+test('changing balance or open-order set during snapshot collection fails closed',async()=>{
+ for(const mode of ['balance','orders']){let accounts=0,orders=0;const a=adapter(async(url)=>{if(new URL(String(url)).pathname==='/api/v3/account'){accounts++;return json(accountResponse(mode==='balance'&&accounts===2?{balances:[]}:{ }));}orders++;return json(mode==='orders'&&orders===2?[openResponse()]:[]);});await assert.rejects(a.accountSnapshot(),/CHANGED_DURING_READ/);}
+});
+test('malformed/negative/duplicate balances and invalid open-order statuses fail snapshot validation',async()=>{
+ for(const bad of [accountResponse({canTrade:'true'}),accountResponse({accountType:'MARGIN'}),accountResponse({balances:[{asset:'USDT',free:'-1',locked:'0'}]}),accountResponse({balances:[{asset:'BTC',free:'1',locked:'0'},{asset:'BTC',free:'1',locked:'0'}]})])await assert.rejects(adapter(async(url)=>new URL(String(url)).pathname==='/api/v3/account'?json(bad):json([])).accountSnapshot());
+ for(const bad of [[openResponse({status:'FILLED'})],[openResponse(),openResponse()],[openResponse({orderId:9007199254740992})],[openResponse({executedQty:'2'})]])await assert.rejects(adapter(async(url)=>new URL(String(url)).pathname==='/api/v3/account'?json(accountResponse()):json(bad)).accountSnapshot());
+});
+test('slow collection and account read error do not produce apparently fresh snapshot',async()=>{
+ let now=1234567890;const a=createBinanceTestnetAdapter({apiKey,secretKey,now:()=>now,fetcher:async(url)=>{now+=3000;return new URL(String(url)).pathname==='/api/v3/account'?json(accountResponse()):json([]);}});await assert.rejects(a.accountSnapshot(),/STALE/);
+ const b=adapter(async()=>json({code:-2015},401));await assert.rejects(b.accountSnapshot(),/UNCONFIRMED/);
+});

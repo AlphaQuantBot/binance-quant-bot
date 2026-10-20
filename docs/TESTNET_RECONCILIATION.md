@@ -33,7 +33,7 @@ An order absent from a new provider query does not produce a successful fresh ve
 
 ## Still required before a connected pilot
 
-Current exchange-state and fee verification does not replace full account reconciliation. Remaining requirements are dynamic symbol/minimum-notional filters, authoritative balance and reservations, account-wide open-order/trade reconciliation on startup, persistent rate limits, bounded server worker, user-data stream recovery and server risk controls. Stop/limit/cancel submissions, quote-amount intents and realized PnL/cost basis are not implemented here. No automated submission entry point is supplied until those controls are ready. The browser strategy/paper accounting remains a separate pending repair.
+Current exchange-state and fee verification does not replace full account reconciliation. A repeated-read account snapshot, known-order/open-order reconciliation and durable capital reservations are now implemented in FundedExecution; see ACCOUNT_FUNDING.md. Remaining requirements include dynamic symbol/minimum-notional filters, historical account accounting, persistent rate limits, bounded server worker, user-data stream recovery and server risk controls. Stop/limit/cancel submissions, quote-amount intents and realized PnL/cost basis are not implemented here. No automated submission entry point is supplied until those controls are ready. The browser strategy/paper accounting remains a separate pending repair.
 
 ## Verification and references
 
