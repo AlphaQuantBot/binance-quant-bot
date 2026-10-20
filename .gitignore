@@ -24,3 +24,5 @@ coverage/
 .testnet_order_journal.json*
 
 .testnet_capital_journal.json*
+
+.testnet_equity_history.json*

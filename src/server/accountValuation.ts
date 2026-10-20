@@ -31,5 +31,5 @@ export async function valueAccount(reader:Reader,accountId:string,now=Date.now){
   return {asset:b.asset,quantity:decimal(quantity),priceUSDT:c.quote.bid,valueUSDT:decimal(value),source:'SPOT_BID' as const,priceObservedAt:c.quote.observedAt};
  });
  const complete=issues.length===0;
- return {environment:'BINANCE_TESTNET' as const,accountId,quoteAsset:'USDT' as const,operation:'READ_ONLY_ACCOUNT_VALUATION' as const,startedAt:before.startedAt,observedAt,balanceDigest:balanceDigest(after),complete,currentEquityUSDT:complete?decimal(total):null,assets,pricedAssets:assets.filter(a=>a.valueUSDT!==null).map(a=>a.asset),unpricedAssets:assets.filter(a=>a.valueUSDT===null).map(a=>a.asset),issues,dailyRiskAuthorized:false as const};
+ return {environment:'BINANCE_TESTNET' as const,accountId,quoteAsset:'USDT' as const,operation:'READ_ONLY_ACCOUNT_VALUATION' as const,startedAt:before.startedAt,observedAt,balanceDigest:balanceDigest(after),balances:normalizeBalances(after.balances),complete,currentEquityUSDT:complete?decimal(total):null,assets,pricedAssets:assets.filter(a=>a.valueUSDT!==null).map(a=>a.asset),unpricedAssets:assets.filter(a=>a.valueUSDT===null).map(a=>a.asset),issues,dailyRiskAuthorized:false as const};
 }
