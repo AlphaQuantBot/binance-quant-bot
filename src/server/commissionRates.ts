@@ -1,6 +1,6 @@
 import {units,decimal} from './exactDecimal';
 type Rates={maker:string;taker:string;buyer:string;seller:string};
-export type CommissionSnapshot={environment:'BINANCE_TESTNET';accountId:string;symbol:string;startedAt:number;observedAt:number;source:'EXCHANGE_ACCOUNT_COMMISSION';standard:Rates;special:Rates;tax:Rates;discount:{enabledForAccount:boolean;enabledForSymbol:boolean;discountAsset:string;discount:string}};
+export type CommissionSnapshot={environment:'BINANCE_TESTNET';accountId:string;symbol:string;startedAt:number;observedAt:number;source:'EXCHANGE_ACCOUNT_COMMISSION';standard:Rates;special:Rates;tax:Rates;discount:{enabledForAccount:boolean;enabledForSymbol:boolean;discountAsset:string|null;discount:string}};
 const SCALE=10n**18n;
 function rates(raw:any):Rates{
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('COMMISSION_COMPONENT_REQUIRED');
@@ -13,11 +13,15 @@ export function normalizeCommission(raw:any,accountId:string,symbol:string,start
  const d=raw.discount;
  if(!d||typeof d!=='object'||Array.isArray(d))throw Error('COMMISSION_DISCOUNT_MISSING');
  if(typeof d.enabledForAccount!=='boolean'||typeof d.enabledForSymbol!=='boolean')throw Error('COMMISSION_DISCOUNT_FLAGS_INVALID');
- if(typeof d.discountAsset!=='string')throw Error('COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
- if(d.discountAsset==='')throw Error('COMMISSION_DISCOUNT_ASSET_EMPTY');
- if(!/^[A-Z0-9]{1,24}$/.test(d.discountAsset))throw Error('COMMISSION_DISCOUNT_ASSET_UNSUPPORTED');
+ // No discount asset is needed when both exchange flags explicitly disable discounts.
+ // Preserve its absence as null; never invent BNB or apply a discount.
+ const assetAbsent=d.discountAsset==null||d.discountAsset==='';
+ const disabled=d.enabledForAccount===false&&d.enabledForSymbol===false;
+ if(assetAbsent&&!disabled)throw Error(d.discountAsset===''?'COMMISSION_DISCOUNT_ASSET_EMPTY':'COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
+ if(!assetAbsent&&typeof d.discountAsset!=='string')throw Error('COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
+ if(!assetAbsent&&!/^[A-Z0-9]{1,24}$/.test(d.discountAsset))throw Error('COMMISSION_DISCOUNT_ASSET_UNSUPPORTED');
  if(units(d.discount)>SCALE)throw Error('COMMISSION_DISCOUNT_RATE_UNSUPPORTED');
- const snapshot:CommissionSnapshot={environment:'BINANCE_TESTNET',accountId,symbol,startedAt,observedAt,source:'EXCHANGE_ACCOUNT_COMMISSION',standard:rates(raw.standardCommission),special:rates(raw.specialCommission),tax:rates(raw.taxCommission),discount:{enabledForAccount:d.enabledForAccount,enabledForSymbol:d.enabledForSymbol,discountAsset:d.discountAsset,discount:decimal(units(d.discount))}};
+ const snapshot:CommissionSnapshot={environment:'BINANCE_TESTNET',accountId,symbol,startedAt,observedAt,source:'EXCHANGE_ACCOUNT_COMMISSION',standard:rates(raw.standardCommission),special:rates(raw.specialCommission),tax:rates(raw.taxCommission),discount:{enabledForAccount:d.enabledForAccount,enabledForSymbol:d.enabledForSymbol,discountAsset:assetAbsent?null:d.discountAsset,discount:decimal(units(d.discount))}};
  commissionSummary(snapshot,accountId,symbol,observedAt);return snapshot;
 }
 /** Undiscounted current rates only; never future GTC fee-reservation evidence. */

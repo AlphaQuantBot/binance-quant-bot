@@ -134,3 +134,17 @@ flags, missing/non-string/unsupported asset names, and unsupported rates. No raw
 response or private values are printed, and validation has not been relaxed.
 Pull and repeat preflight in the same keyed PowerShell to identify the field.
 No trading readiness or order submission has been confirmed.
+
+
+### Disabled discount metadata
+
+The next operator run returned account PASS and commission
+COMMISSION_DISCOUNT_ASSET_TYPE_INVALID. This proves a non-string/absent discount
+asset was encountered, but does not disclose its exact value or enable flags.
+The parser now permits absent/null/empty discount assets only when BOTH exchange
+flags explicitly disable discounts. It preserves absence as null, requires a
+valid explicit discount rate and all commission components, and continues to
+calculate undiscounted totals. It does not default the asset to BNB. Any enabled
+flag with an absent asset, or nonempty malformed metadata, still blocks the read.
+This is conservative compatibility handling, not a claim about the operator's
+unseen response. Actual preflight must be rerun; trading stays disabled.
