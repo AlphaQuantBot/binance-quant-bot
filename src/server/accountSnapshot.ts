@@ -37,6 +37,7 @@ export function accountDiscrepancies(snapshot: AccountSnapshot, rows: OrderRecor
   if (rows.some(r => r.accountId !== snapshot.accountId)) problems.push('JOURNAL_ACCOUNT_MISMATCH');
   for (const r of rows) {
     const c = r.confirmation;
+    if(r.cancelState&&r.cancelState!=='RESOLVED')problems.push('CANCELLATION_UNRESOLVED:'+r.requestId);
     if (['SUBMITTING','UNKNOWN'].includes(r.status) || !c) { problems.push('ORDER_UNRESOLVED:' + r.requestId); continue; }
     if (units(c.executedQty) > 0n && !c.settlement) problems.push('TRADE_SETTLEMENT_MISSING:' + r.requestId);
     const open = snapshot.openOrders.find(o => o.clientOrderId === r.clientOrderId);

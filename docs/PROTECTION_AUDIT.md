@@ -102,3 +102,31 @@ An actual exchange run, exchange rule checks for conditional orders, position
 reservation, cancel acknowledgement, partial-fill handling during replacement,
 and recovery of ambiguous cancellation are still required before enabling stop
 management. No claim of complete stage-two readiness is made.
+
+## Durable cancellation state
+
+Internal `OrderExecution.cancelStop(requestId)` now performs at most one automatic
+cancel attempt for a retained protective stop. It requires a confirmed active stop,
+records `REQUESTING` durably before DELETE, and records `UNKNOWN` until a validated
+read query establishes a terminal outcome. Restart turns REQUESTING into UNKNOWN;
+repeated cancel calls return the existing state without replaying DELETE. A missing
+order or an order still NEW is not proof of cancellation. A fully filled order is
+recorded as FILLED, not CANCELED. Executions require reconciled trade/fee evidence
+before the cancellation state becomes RESOLVED. Unresolved cancellation blocks new
+account submissions and account readiness, including after restart.
+
+The fixed-host testnet adapter cancels only the retained symbol, exchange order ID
+and original client ID. It assigns a deterministic cancellation client ID, then
+queries by retained exchange order ID. The read normalizer accepts that exact
+cancellation alias only on a terminal order; arbitrary aliases and order IDs fail.
+The DELETE reply alone is never used as execution or cancellation confirmation.
+Read/transport errors leave the cancellation unresolved. Operations on a journal
+are serialized while reconciliation/cancellation is in flight.
+
+RESOLVED means the cancellation attempt's final order outcome is reconciled; it
+never means a position is currently protected. Cancellation can remove protection.
+No new HTTP/browser/CLI cancel command is exposed. No automatic replacement is
+implemented or authorized by this state, and cancel/replace atomicity is not
+claimed. Replacement still needs a fresh position/balance/fee calculation and
+conditional-order risk/filter checks. Existing single-process/manual stale-lock
+recovery limitations remain. Tests use fixtures, never real exchange requests.

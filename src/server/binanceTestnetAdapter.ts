@@ -42,7 +42,7 @@ export function createBinanceTestnetAdapter(options: {
     if (i.accountId !== accountId) throw Error('TESTNET_ACCOUNT_MISMATCH');
     if (!/^[A-Z0-9]{5,24}$/.test(i.symbol) || !['BUY','SELL'].includes(i.side) || !/^aq_[a-f0-9]{32}$/.test(clientId) || units(i.quantity) <= 0n) throw Error('INVALID_ORDER_REQUEST');
   }
-  async function request(method: 'GET'|'POST', endpoint: string, params: {[key:string]:string}, allowMissing = false, signedRequest = true, missingReference = false): Promise<any> {
+  async function request(method: 'GET'|'POST'|'DELETE', endpoint: string, params: {[key:string]:string}, allowMissing = false, signedRequest = true, missingReference = false): Promise<any> {
     const timestamp = now();
     if (timestamp < blockedUntil) throw Error('EXCHANGE_COOLDOWN');
     if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw Error('INVALID_CLOCK');
@@ -50,7 +50,7 @@ export function createBinanceTestnetAdapter(options: {
     const signed = signedRequest ? query + '&signature=' + createHmac('sha256', secretKey).update(query).digest('hex') : query;
     let response: Response;
     try {
-      response = await fetcher(HOST + endpoint + (method === 'GET' ? '?' + signed : ''), {
+      response = await fetcher(HOST + endpoint + (method !== 'POST' ? '?' + signed : ''), {
         method, redirect:'error', signal:AbortSignal.timeout(12000),
         headers:{...(signedRequest?{'X-MBX-APIKEY':apiKey}:{}), ...(method === 'POST' ? {'Content-Type':'application/x-www-form-urlencoded'} : {})},
         ...(method === 'POST' ? {body:signed} : {}),
@@ -141,10 +141,23 @@ export function createBinanceTestnetAdapter(options: {
       // An ACK or FULL response without complete validated totals stays UNKNOWN in the journal.
       return normalize(raw, intent, clientId);
     },
-    async query(intent, clientId) {
+    async cancel(intent, clientId, orderId, cancelClientId) {
+      validateIntent(intent,clientId);
+      if(intent.stopPrice===undefined||id(orderId)!==orderId||!/^ac_[a-f0-9]{32}$/.test(cancelClientId))throw Error('INVALID_STOP_CANCEL');
+      // Both IDs must identify the same retained order; no bulk cancellation.
+      await request('DELETE','/api/v3/order',{symbol:intent.symbol,orderId,origClientOrderId:clientId,newClientOrderId:cancelClientId});
+    },
+    async query(intent, clientId, cancellation) {
       validateIntent(intent, clientId);
-      const raw = await request('GET', '/api/v3/order', {symbol:intent.symbol, origClientOrderId:clientId}, true);
+      if(cancellation&&(intent.stopPrice===undefined||id(cancellation.orderId)!==cancellation.orderId||!/^ac_[a-f0-9]{32}$/.test(cancellation.clientOrderId)))throw Error('INVALID_STOP_CANCEL');
+      let raw = await request('GET', '/api/v3/order', cancellation?{symbol:intent.symbol,orderId:cancellation.orderId}:{symbol:intent.symbol, origClientOrderId:clientId}, true);
       if (raw === null) return null;
+      if(cancellation){
+        if(id(raw.orderId)!==cancellation.orderId)throw Error('ORDER_IDENTITY_MISMATCH');
+        // Cancellation can rename the exchange client ID. Only the retained deterministic
+        // alias on a terminal order is accepted, never an arbitrary exchange identity.
+        if(raw.clientOrderId===cancellation.clientOrderId&&['CANCELED','FILLED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'].includes(raw.status))raw={...raw,clientOrderId:clientId};
+      }
       const order = normalize(raw, intent, clientId);
       const trades: ExecutionTrade[] = [];
       if (units(order.executedQty) > 0n) {

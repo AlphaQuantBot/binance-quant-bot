@@ -6,8 +6,8 @@ import { createHash, randomUUID } from 'node:crypto';
 export type Status = 'SUBMITTING'|'UNKNOWN'|'NEW'|'PARTIALLY_FILLED'|'FILLED'|'CANCELED'|'REJECTED'|'EXPIRED'|'EXPIRED_IN_MATCH';
 export type Intent = {requestId:string; accountId:string; symbol:string; side:'BUY'|'SELL'; quantity:string;limitPrice?:string; stopPrice?:string};
 export type Confirmation = {clientOrderId:string; symbol:string; side:'BUY'|'SELL'; status:Status; orderId:string; executedQty:string; quoteQty:string; updateTime:number; settlement?:Settlement};
-export type Record = Intent & {clientOrderId:string; status:Status; confirmation?:Confirmation};
-export interface Adapter { submit(intent:Intent, clientId:string):Promise<Confirmation>; query(intent:Intent, clientId:string):Promise<Confirmation|null> }
+export type Record = Intent & {clientOrderId:string; status:Status; cancelState?:'REQUESTING'|'UNKNOWN'|'RESOLVED'; confirmation?:Confirmation};
+export interface Adapter { submit(intent:Intent, clientId:string):Promise<Confirmation>; query(intent:Intent, clientId:string, cancellation?:{orderId:string;clientOrderId:string}):Promise<Confirmation|null>; cancel?(intent:Intent, clientId:string, orderId:string, cancelClientId:string):Promise<void> }
 const states = ['NEW','PARTIALLY_FILLED','FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
 const terminal = ['FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
 function validate(i:Intent) {
@@ -16,6 +16,7 @@ function validate(i:Intent) {
   if(!/^[\w-]{8,80}$/.test(i.requestId)||!/^[\w-]{1,80}$/.test(i.accountId)||!/^[A-Z0-9]{5,24}$/.test(i.symbol)||!['BUY','SELL'].includes(i.side)||amount(i.quantity)<=0n)throw Error('INVALID_INTENT');
 }
 const fingerprint=(i:Intent)=>JSON.stringify([i.requestId,i.accountId,i.symbol,i.side,i.quantity,...(i.limitPrice===undefined?[]:[i.limitPrice]),...(i.stopPrice===undefined?[]:['STOP_LOSS_LIMIT',i.stopPrice])]);
+const cancelId=(client:string)=>'ac_'+createHash('sha256').update(client).digest('hex').slice(0,32);
 const clientId=(i:Intent)=>'aq_'+createHash('sha256').update(fingerprint(i)).digest('hex').slice(0,32);
 /** Single operator/process journal; stale locks require manual recovery. No exchange adapter is enabled. */
 export class OrderExecution {
@@ -31,8 +32,9 @@ export class OrderExecution {
         this.rows=data.orders.map((r:Record)=>{
           validate(r);
           if(ids.has(r.requestId)||r.clientOrderId!==clientId(r)||!['SUBMITTING','UNKNOWN',...states].includes(r.status))throw Error('INVALID_JOURNAL');
+          if(r.cancelState!==undefined&&(!['REQUESTING','UNKNOWN','RESOLVED'].includes(r.cancelState)||r.stopPrice===undefined||!r.confirmation||(r.cancelState==='RESOLVED'&&(!terminal.includes(r.status)||(amount(r.confirmation.executedQty)>0n&&!r.confirmation.settlement)))))throw Error('INVALID_CANCEL_JOURNAL');
           ids.add(r.requestId);if(r.confirmation){this.check(r,r.confirmation);if(r.status!==r.confirmation.status&&r.status!=='UNKNOWN')throw Error('INVALID_JOURNAL_STATUS');}
-          return {...r,status:r.status==='SUBMITTING'?'UNKNOWN':r.status};
+          return {...r,status:r.status==='SUBMITTING'?'UNKNOWN':r.status,...(r.cancelState==='REQUESTING'?{cancelState:'UNKNOWN' as const}:{})};
         });this.persist();
       }
     }catch(e){fs.closeSync(this.fd);fs.unlinkSync(file+'.lock');throw e;}
@@ -65,12 +67,14 @@ export class OrderExecution {
       }
       if(prev.status==='PARTIALLY_FILLED'&&e.status==='NEW')throw Error('STATUS_REGRESSED');
     }
-    r.confirmation=structuredClone(e);r.status=e.status;this.persist();
+    r.confirmation=structuredClone(e);r.status=e.status;
+    if(r.cancelState&&terminal.includes(e.status)&&(amount(e.executedQty)===0n||e.settlement))r.cancelState='RESOLVED';
+    this.persist();
   }
   async submit(i:Intent){
     this.open();validate(i);i={requestId:i.requestId,accountId:i.accountId,symbol:i.symbol,side:i.side,quantity:i.quantity,...(i.limitPrice===undefined?{}:{limitPrice:i.limitPrice}),...(i.stopPrice===undefined?{}:{stopPrice:i.stopPrice})};const prev=this.rows.find(r=>r.requestId===i.requestId);
     if(prev){if(fingerprint(prev)!==fingerprint(i))throw Error('IDEMPOTENCY_CONFLICT');return structuredClone(prev);}
-    if(this.rows.some(r=>r.accountId===i.accountId&&['SUBMITTING','UNKNOWN'].includes(r.status)))throw Error('RECONCILIATION_REQUIRED');
+    if(this.rows.some(r=>r.accountId===i.accountId&&(['SUBMITTING','UNKNOWN'].includes(r.status)||(r.cancelState!==undefined&&r.cancelState!=='RESOLVED'))))throw Error('RECONCILIATION_REQUIRED');
     const r:Record={...i,clientOrderId:clientId(i),status:'SUBMITTING'};this.rows.push(r);
     try{this.persist();}catch(e){this.closed=true;throw e;}
     try{this.apply(r,await this.adapter.submit(structuredClone(i),r.clientOrderId));}
@@ -79,10 +83,27 @@ export class OrderExecution {
   }
   async reconcile(id:string){
     this.open();const r=this.rows.find(r=>r.requestId===id);if(!r)throw Error('ORDER_NOT_FOUND');
-    if(r.status==='SUBMITTING')throw Error('SUBMISSION_IN_PROGRESS');
+    if(r.status==='SUBMITTING'||r.cancelState==='REQUESTING')throw Error('SUBMISSION_IN_PROGRESS');
+    if(this.inFlight>0)throw Error('RECONCILIATION_IN_PROGRESS');
     this.inFlight++;
-    try{const e=await this.adapter.query(structuredClone(r),r.clientOrderId);if(e)this.apply(r,e);return structuredClone(r);}
+    try{const e=await this.adapter.query(structuredClone(r),r.clientOrderId,r.cancelState&&r.confirmation?{orderId:r.confirmation.orderId,clientOrderId:cancelId(r.clientOrderId)}:undefined);if(e)this.apply(r,e);return structuredClone(r);}
     finally{this.inFlight--;}
+  }
+  /** One durable cancellation attempt; ambiguous results require read reconciliation, never retry. */
+  async cancelStop(id:string){
+    this.open();
+    if(this.inFlight>0)throw Error('RECONCILIATION_IN_PROGRESS');
+    const r=this.rows.find(r=>r.requestId===id);
+    if(!r||r.stopPrice===undefined||!r.confirmation||!this.adapter.cancel)throw Error('STOP_CANCEL_UNAVAILABLE');
+    if(r.cancelState)return structuredClone(r);
+    if(!['NEW','PARTIALLY_FILLED'].includes(r.status))throw Error('STOP_NOT_ACTIVE');
+    r.cancelState='REQUESTING';this.persist();this.inFlight++;
+    try{
+      try{await this.adapter.cancel(structuredClone(r),r.clientOrderId,r.confirmation.orderId,cancelId(r.clientOrderId));}catch{/* Even transport failure requires a query, never a second DELETE. */}
+      r.cancelState='UNKNOWN';this.persist();
+      try{const e=await this.adapter.query(structuredClone(r),r.clientOrderId,{orderId:r.confirmation.orderId,clientOrderId:cancelId(r.clientOrderId)});if(e)this.apply(r,e);}catch{if(this.closed)throw Error('JOURNAL_CLOSED');/* Remain unresolved until successful read reconciliation. */}
+      return structuredClone(r);
+    }finally{this.inFlight--;}
   }
   close(){if(this.inFlight>0)throw Error('RECONCILIATION_IN_PROGRESS');if(this.rows.some(r=>r.status==='SUBMITTING'))throw Error('SUBMISSION_IN_PROGRESS');fs.closeSync(this.fd);fs.unlinkSync(this.file+'.lock');this.closed=true;}
 }
