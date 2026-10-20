@@ -104,6 +104,7 @@ export function createBinanceTestnetAdapter(options: {
       const r=object(info.symbols[0]);
       if(!Array.isArray(r.filters))throw Error('INVALID_EXCHANGE_INFO');
       const percent=r.filters.filter((f:any)=>['PERCENT_PRICE','PERCENT_PRICE_BY_SIDE'].includes(f?.filterType));
+      const referencePromise=(async()=>{
       let reference:PriceReference|undefined;
       if(percent.length){
         const observedAt=now();
@@ -124,8 +125,12 @@ export function createBinanceTestnetAdapter(options: {
           }
         }
       }
+      return reference;
+      })();
       const quoteAt=now();
-      const q=object(await request('GET','/api/v3/ticker/bookTicker',{symbol},false,false));
+      // Read independent reference and book concurrently, retaining original request timestamps.
+      const [reference,book]=await Promise.all([referencePromise,request('GET','/api/v3/ticker/bookTicker',{symbol},false,false)]);
+      const q=object(book);
       if(q.symbol!==symbol)throw Error('BOOK_SYMBOL_MISMATCH');
       const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
       validateTradeContext(context,symbol,now());

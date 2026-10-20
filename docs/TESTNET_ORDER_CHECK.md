@@ -43,3 +43,20 @@ runs such an experiment or starts a trading bot.
 
 Local validation: 238 fixture tests, TypeScript and production build passed.
 Actual Windows order-check validation remains pending the operator command.
+
+## First operator order-check: reference freshness blocked
+
+Actual operator run on 899a9c2 failed STALE_REFERENCE_PRICE before validation
+POST; matchingEngineOrderCreated=false. The result alone does not identify
+request age, exchange event age or a future timestamp/clock offset.
+
+Reference and book were collected sequentially. They now start concurrently
+after validated exchangeInfo. This removes avoidable waiting without retry,
+fallback substitution, timestamp rebasing, or relaxing either freshness check.
+Original local request start times and exchange event timestamps are retained.
+When reference freshness still fails, the CLI reports only referenceKind,
+requestAgeMs and eventAgeMs. Negative event age indicates a future exchange
+ timestamp relative to the local clock; it remains blocked. Real response
+ages and root cause are not inferred from the original generic error.
+Local validation: 241 tests, TypeScript and production build passed. Operator
+must pull and rerun testnet:order-check. Actual validation is still unconfirmed.

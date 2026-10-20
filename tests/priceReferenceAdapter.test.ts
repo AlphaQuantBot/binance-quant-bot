@@ -30,3 +30,15 @@ test('wrong average window, mixed windows and stale reference/average fail close
 test('zero-minute filter uses last trade only after confirmed reference absence',async()=>{
  const s=setup({symbol:'BTCUSDT',referencePrice:null},{window:0});assert.equal((await s.adapter.tradeContext('BTCUSDT')).reference?.kind,'LAST_TRADE');assert.equal(s.calls.includes('/api/v3/avgPrice'),false);const bad=setup({symbol:'BTCUSDT',referencePrice:null},{window:0,trades:[]});await assert.rejects(bad.adapter.tradeContext('BTCUSDT'),/LAST_TRADE/);
 });
+
+test('independent reference and book reads overlap without refreshing either timestamp', {timeout:1000}, async()=>{
+ let clock=1000,referenceStarted=false,releaseReference:(()=>void)|undefined;
+ const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>clock,fetcher:async url=>{
+  const p=new URL(String(url)).pathname;
+  if(p.endsWith('exchangeInfo'))return json({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[filter()]}],exchangeFilters:[]});
+  if(p.endsWith('referencePrice')){referenceStarted=true;return new Promise<Response>(resolve=>{releaseReference=()=>resolve(json({symbol:'BTCUSDT',referencePrice:'100',timestamp:1000}));});}
+  if(p.endsWith('bookTicker')){assert.equal(referenceStarted,true);clock=2500;releaseReference!();return json({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'2',askQty:'2'});}
+  throw Error('unexpected');
+ }});
+ const c=await a.tradeContext('BTCUSDT');assert.equal(c.reference?.observedAt,1000);assert.equal(c.quote.observedAt,1000);assert.equal(c.reference?.timestamp,1000);
+});
