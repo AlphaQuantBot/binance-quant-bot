@@ -30,7 +30,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext> } {
+}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -69,6 +69,10 @@ export function createBinanceTestnetAdapter(options: {
     return body;
   }
   return {
+    async protectionOrder(symbol, orderId) {
+      if(!/^[A-Z0-9]{5,24}$/.test(symbol)||id(orderId)!==orderId)throw Error('INVALID_PROTECTION_TARGET');
+      return request('GET','/api/v3/order',{symbol,orderId},true);
+    },
     async tradeContext(symbol) {
       if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
       const startedAt=now();
