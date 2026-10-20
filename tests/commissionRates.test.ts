@@ -20,11 +20,21 @@ test('explicitly disabled discount can omit its asset without inventing one or r
  assert.equal(summary.buy.taker,'0.002155');assert.equal(summary.discountApplied,false);assert.equal(summary.reservationAuthorized,false);
  }
 });
-test('absent discount asset stays blocked unless both flags explicitly disable it',()=>{
- for(const flags of [[true,true],[true,false],[false,true]])for(const asset of [null,undefined,'']){
+test('missing or empty enabled discount asset stays blocked; malformed types remain rejected',()=>{
+ for(const flags of [[true,true],[true,false],[false,true]])for(const asset of [undefined,'']){
  const r:any=raw();r.discount={enabledForAccount:flags[0],enabledForSymbol:flags[1],discountAsset:asset,discount:'0'};
  assert.throws(()=>normalizeCommission(r,accountId,'BTCUSDT',1000,1001),/COMMISSION_DISCOUNT_ASSET/);
  }
  for(const asset of [123,{},[],false]){const r:any=raw();r.discount={enabledForAccount:false,enabledForSymbol:false,discountAsset:asset,discount:'0'};assert.throws(()=>normalizeCommission(r,accountId,'BTCUSDT',1000,1001),/COMMISSION_DISCOUNT_ASSET/);}
  const r:any=raw();r.discount={enabledForAccount:false,enabledForSymbol:false,discountAsset:null,discount:null};assert.throws(()=>normalizeCommission(r,accountId,'BTCUSDT',1000,1001));
+});
+
+
+test('observed enabled flags with null asset retain incomplete metadata and full undiscounted fees',()=>{
+ const r:any=raw();r.discount.discountAsset=null;
+ const s=normalizeCommission(r,accountId,'BTCUSDT',1000,1001);
+ assert.equal(s.discount.enabledForAccount,true);assert.equal(s.discount.enabledForSymbol,true);assert.equal(s.discount.discountAsset,null);assert.equal(s.discount.discount,'0.25');
+ const summary=commissionSummary(s,accountId,'BTCUSDT',1001);
+ assert.equal(summary.discountMetadataComplete,false);assert.equal(summary.discountApplied,false);assert.equal(summary.reservationAuthorized,false);assert.equal(summary.buy.taker,'0.002155');
+ for(const mutate of [(x:any)=>x.discount.discount=0.25,(x:any)=>x.discount.discount='1.01',(x:any)=>delete x.taxCommission]){const invalid:any=raw();invalid.discount.discountAsset=null;mutate(invalid);assert.throws(()=>normalizeCommission(invalid,accountId,'BTCUSDT',1000,1001));}
 });

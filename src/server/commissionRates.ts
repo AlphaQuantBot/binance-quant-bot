@@ -13,11 +13,11 @@ export function normalizeCommission(raw:any,accountId:string,symbol:string,start
  const d=raw.discount;
  if(!d||typeof d!=='object'||Array.isArray(d))throw Error('COMMISSION_DISCOUNT_MISSING');
  if(typeof d.enabledForAccount!=='boolean'||typeof d.enabledForSymbol!=='boolean')throw Error('COMMISSION_DISCOUNT_FLAGS_INVALID');
- // No discount asset is needed when both exchange flags explicitly disable discounts.
- // Preserve its absence as null; never invent BNB or apply a discount.
+ // Observed testnet response: both flags true with an explicit null asset.
+ // Preserve that incomplete metadata; reading undiscounted rates does not authorize a discount.
  const assetAbsent=d.discountAsset==null||d.discountAsset==='';
  const disabled=d.enabledForAccount===false&&d.enabledForSymbol===false;
- if(assetAbsent&&!disabled)throw Error(d.discountAsset===''?'COMMISSION_DISCOUNT_ASSET_EMPTY':'COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
+ if(assetAbsent&&!disabled&&d.discountAsset!==null)throw Error(d.discountAsset===''?'COMMISSION_DISCOUNT_ASSET_EMPTY':'COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
  if(!assetAbsent&&typeof d.discountAsset!=='string')throw Error('COMMISSION_DISCOUNT_ASSET_TYPE_INVALID');
  if(!assetAbsent&&!/^[A-Z0-9]{1,24}$/.test(d.discountAsset))throw Error('COMMISSION_DISCOUNT_ASSET_UNSUPPORTED');
  if(units(d.discount)>SCALE)throw Error('COMMISSION_DISCOUNT_RATE_UNSUPPORTED');
@@ -32,5 +32,5 @@ export function commissionSummary(s:CommissionSnapshot,accountId:string,symbol:s
  function total(side:'buyer'|'seller',liquidity:'maker'|'taker'){
   const sum=groups.reduce((n,g)=>n+units(g[side])+units(g[liquidity]),0n);if(sum>SCALE)throw Error('UNSUPPORTED_COMMISSION_RATE');return decimal(sum);
  }
- return {buy:{maker:total('buyer','maker'),taker:total('buyer','taker')},sell:{maker:total('seller','maker'),taker:total('seller','taker')},discountApplied:false as const,reservationAuthorized:false as const};
+ return {buy:{maker:total('buyer','maker'),taker:total('buyer','taker')},sell:{maker:total('seller','maker'),taker:total('seller','taker')},discountMetadataComplete:s.discount.discountAsset!==null,discountApplied:false as const,reservationAuthorized:false as const};
 }

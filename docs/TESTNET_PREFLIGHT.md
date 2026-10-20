@@ -148,3 +148,18 @@ calculate undiscounted totals. It does not default the asset to BNB. Any enabled
 flag with an absent asset, or nonempty malformed metadata, still blocks the read.
 This is conservative compatibility handling, not a claim about the operator's
 unseen response. Actual preflight must be rerun; trading stays disabled.
+
+
+### Operator-confirmed null discount asset with enabled flags
+
+A sanitized real HTTP 200 diagnostic confirmed enabledForAccount=true,
+enabledForSymbol=true, discountAsset=null, and a string discount rate. Previous
+handling limited to disabled flags did not resolve this observed response.
+Explicit null assets now remain null even with enabled flags. This supports
+reading validated standard/special/tax rates, never assuming BNB or applying
+any discount. Summary exposes discountMetadataComplete=false; preflight includes
+DISCOUNT_ASSET_UNAVAILABLE_NO_DISCOUNT_APPLIED. Missing/empty enabled assets and
+other malformed types remain rejected. All rate, freshness and identity checks
+remain, and reservationAuthorized/tradingEnabled remain false. Authenticated read
+readiness refers only to validated reads, not complete discount or trade readiness.
+Actual operator rerun is still required to confirm remaining numeric components.

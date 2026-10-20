@@ -1,5 +1,5 @@
 import {createBinanceTestnetAdapter} from './binanceTestnetAdapter';
-type Check={name:string;state:'PASS'|'FAIL'|'BLOCKED'|'SKIPPED';code:string;httpStatus?:number};
+type Check={name:string;state:'PASS'|'FAIL'|'BLOCKED'|'SKIPPED';code:string;httpStatus?:number;warnings?:string[]};
 /** Actual fixed-host public/authenticated read checks only. Never places an order. */
 export async function testnetPreflight(options:{apiKey?:string;secretKey?:string;symbol?:string;fetcher?:typeof fetch;now?:()=>number}={}){
  const symbol=options.symbol??'BTCUSDT';if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_PREFLIGHT_SYMBOL');
@@ -23,7 +23,7 @@ export async function testnetPreflight(options:{apiKey?:string;secretKey?:string
  let adapter:ReturnType<typeof createBinanceTestnetAdapter>;
  try{adapter=createBinanceTestnetAdapter({apiKey:options.apiKey!,secretKey:options.secretKey!,fetcher,now});}catch{checks.push({name:'account',state:'FAIL',code:'INVALID_TESTNET_CREDENTIALS'},{name:'commission',state:'SKIPPED',code:'ACCOUNT_CHECK_FAILED'});return result();}
  for(const name of ['account','commission']){
-  try{if(name==='account')await adapter.accountSnapshot();else await adapter.commissionRates(symbol);checks.push({name,state:'PASS',code:'AUTHENTICATED_READ_CONFIRMED'});}
+  try{let warnings:string[]|undefined;if(name==='account')await adapter.accountSnapshot();else {const commission=await adapter.commissionRates(symbol);if(commission.discount.discountAsset===null)warnings=['DISCOUNT_ASSET_UNAVAILABLE_NO_DISCOUNT_APPLIED'];}checks.push({name,state:'PASS',code:'AUTHENTICATED_READ_CONFIRMED',...(warnings?{warnings}:{})});}
   catch(e){const allowed=['EXCHANGE_LOCATION_RESTRICTED','EXCHANGE_COOLDOWN','EXCHANGE_REQUEST_UNCONFIRMED','EXCHANGE_TRANSPORT_UNKNOWN','EXCHANGE_RESPONSE_UNKNOWN','INVALID_EXCHANGE_RESPONSE','INVALID_SPOT_ACCOUNT','ACCOUNT_CAN_TRADE_INVALID','ACCOUNT_TYPE_UNSUPPORTED','ACCOUNT_PERMISSIONS_MISSING','ACCOUNT_SPOT_PERMISSION_MISSING','INVALID_BALANCES','INVALID_BALANCE_ASSET','INVALID_DECIMAL','INVALID_OPEN_ORDERS','UNSAFE_EXCHANGE_ID','INVALID_OPEN_ORDER','INVALID_OPEN_ORDER_TOTALS','DUPLICATE_OPEN_ORDER','ACCOUNT_CHANGED_DURING_READ','ACCOUNT_SNAPSHOT_STALE','ACCOUNT_SNAPSHOT_MISMATCH','COMMISSION_IDENTITY_MISMATCH','COMMISSION_COMPONENT_REQUIRED','UNSUPPORTED_COMMISSION_RATE','INVALID_COMMISSION_DISCOUNT','COMMISSION_DISCOUNT_MISSING','COMMISSION_DISCOUNT_FLAGS_INVALID','COMMISSION_DISCOUNT_ASSET_TYPE_INVALID','COMMISSION_DISCOUNT_ASSET_EMPTY','COMMISSION_DISCOUNT_ASSET_UNSUPPORTED','COMMISSION_DISCOUNT_RATE_UNSUPPORTED','STALE_COMMISSION_RATES'];const code=e instanceof Error&&allowed.includes(e.message)?e.message:'AUTHENTICATED_READ_UNCONFIRMED';checks.push({name,state:code==='EXCHANGE_LOCATION_RESTRICTED'?'BLOCKED':'FAIL',code});break;}
  }
  if(!checks.some(c=>c.name==='commission'))checks.push({name:'commission',state:'SKIPPED',code:'ACCOUNT_CHECK_FAILED'});
