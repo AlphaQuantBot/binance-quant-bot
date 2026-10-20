@@ -40,3 +40,42 @@ this session. Full-account backfill integration remains outstanding.
 
 Official parameter combinations and response limit:
 https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/rest-api/account
+
+## Persistent scoped recovery and diagnostic activity merge
+
+`npm run testnet:recover-history` uses the same explicit symbol/time settings and
+independent keys. APP_TESTNET_RECOVERY_JOURNAL optionally selects its private
+journal (default .testnet_history_recovery.json, ignored by git with lock/temp
+files). Scope/account identity determines a stable recovery ID. PENDING is fsynced
+before network reads, so restart cannot silently lose an interrupted request.
+
+The command performs two full bounded backfills. Canonical trades, account,
+symbol, interval, report clock and safety flags must validate and the two trade
+sets must match. Changing reads remain pending. Read failures remain pending,
+with no partial trade adoption. Previously retained trades must remain present
+and unchanged; removals or conflicts latch CONFLICT and require review rather
+than destructive automatic baseline replacement. Stable late additions can be
+retained after two matching reads. Attempt/verification times are recorded.
+Exclusive locking and atomic/fsynced replacement protect one process's journal.
+
+STABLE_SYMBOL_WINDOW describes two consistent observations of one selected
+symbol/window, not conclusive exchange completeness or continuous full-account
+gap closure. The report always has accountGapClosed:false and
+dailyRiskAuthorized:false. Empty stable reads cannot prove a reset. No equity
+history activityIssues, midnight baseline or order-unknown state is cleared.
+
+`mergeRecoveredActivity` compares recovered trades with a diagnostic activity
+snapshot using explicit symbol/base/quote metadata. Matching IDs are not counted
+twice; conflicting IDs/fees/pair mappings reject the merge. New manual/other-bot
+fills can appear in the merged diagnostic snapshot, while unresolved local orders
+remain unresolved. No local bot order is adopted, resized, canceled or replaced.
+This helper is tested but not automatically fed into equity-history cursors:
+a timed balance/event worker must first associate recovery scopes with the
+correct observation interval. The CLI only records the scoped recovery journal.
+
+Remaining work includes automatic symbol-universe discovery, interval-to-balance
+event binding, delayed visibility checks, reset detection and worker orchestration.
+Two equal reads can still both omit late exchange records. Actual configured
+Testnet recovery has not run in this session. Fixture tests cover durable pending
+state, retry after restart, changing/failed reads, immutable-history conflicts,
+activity deduplication, malformed reports, process locks and corrupt storage.
