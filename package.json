@@ -17,7 +17,8 @@
     "testnet:protection": "node --import tsx scripts/audit_testnet_protection.ts",
     "testnet:positions": "node --import tsx scripts/audit_testnet_positions.ts",
     "testnet:replacement-plan": "node --import tsx scripts/plan_testnet_stop_replacement.ts",
-    "testnet:commission": "node --import tsx scripts/audit_testnet_commission.ts"
+    "testnet:commission": "node --import tsx scripts/audit_testnet_commission.ts",
+    "testnet:valuation": "node --import tsx scripts/value_testnet_account.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
