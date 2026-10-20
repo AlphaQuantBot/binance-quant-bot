@@ -90,5 +90,19 @@ test('capital journal writer lock and corrupt file are rejected',()=>{
  const s=ledger();try{assert.throws(()=>new CapitalLedger(s.file,accountId),/EEXIST/);s.book.close();fs.writeFileSync(s.file,'invalid');assert.throws(()=>new CapitalLedger(s.file,accountId));fs.unlinkSync(s.file);s.book=new CapitalLedger(s.file,accountId);}finally{cleanup(s);}
 });
 test('capital persistence failure stops before network submission',async()=>{
- const s=funded();try{await s.engine.refresh();fs.unlinkSync(path.join(s.dir,'capital'));fs.mkdirSync(path.join(s.dir,'capital'));await assert.rejects(s.engine.submit(intent,plan));assert.equal(s.calls(),0);await assert.rejects(s.engine.submit({...intent,requestId:'request_0002'},plan),/CLOSED/);}finally{cleanFunded(s);}
+ const s=funded();try{await s.engine.refresh();if(fs.existsSync(path.join(s.dir,'capital')))fs.unlinkSync(path.join(s.dir,'capital'));fs.mkdirSync(path.join(s.dir,'capital'));await assert.rejects(s.engine.submit(intent,plan));assert.equal(s.calls(),0);await assert.rejects(s.engine.submit({...intent,requestId:'request_0002'},plan),/CLOSED/);}finally{cleanFunded(s);}
+});
+
+
+test('empty-ledger refresh performs no journal replace; reservation write failures still block',t=>{
+ const s=ledger();
+ try{
+  const rename=t.mock.method(fs,'renameSync',()=>{throw Object.assign(new Error('fixture storage denied'),{code:'EPERM'});});
+  assert.equal(s.book.reconcile(snapshot(),[]).ready,true);
+  assert.equal(rename.mock.callCount(),0);assert.equal(fs.existsSync(s.file),false);
+  assert.equal(s.book.available('USDT'),'1000');
+  assert.throws(()=>s.book.reserve(intent,[{asset:'USDT',amount:'200'}]),/fixture storage denied/);
+  assert.equal(rename.mock.callCount(),1);assert.throws(()=>s.book.available('USDT'),/CAPITAL_JOURNAL_CLOSED/);
+  rename.mock.restore();
+ }finally{cleanup(s);}
 });

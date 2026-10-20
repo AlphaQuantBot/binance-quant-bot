@@ -61,7 +61,10 @@ export class CapitalLedger {
     if(problems.length)return {ready:false,problems};
     // Fresh exchange free already excludes locked orders and spent cash. Do not debit them twice.
     for(const h of this.holds)h.settled=true;
-    this.persist();this.snapshot=structuredClone(snapshot);
+    // An empty ledger has no reservation state to commit during a read-only refresh.
+    // Do not perform an unnecessary durable write (including directory fsync).
+    // Nonempty reservation state still requires the existing persistence checks.
+    if(this.holds.length)this.persist();this.snapshot=structuredClone(snapshot);
     return {ready:true,problems:[] as string[]};
   }
   available(asset:string) {

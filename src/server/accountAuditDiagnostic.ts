@@ -5,5 +5,7 @@ export function accountAuditDiagnostic(error:unknown,stage:'INITIALIZE'|'REFRESH
  const message=error instanceof Error?error.message:'';
  const fsCode=error instanceof Error?(error as NodeJS.ErrnoException).code:undefined;
  const code=safeMessages.includes(message)?message:fsCode&&filesystemCodes.includes(fsCode)?'LOCAL_STORAGE_'+fsCode:'ACCOUNT_AUDIT_UNCONFIRMED';
- return {environment:'BINANCE_TESTNET',operation:'READ_ONLY_ACCOUNT_AUDIT',stage,state:'FAIL',code,tradingEnabled:false};
+ const syscall=error instanceof Error?(error as NodeJS.ErrnoException).syscall:undefined;
+ const storageOperation=fsCode&&filesystemCodes.includes(fsCode)&&syscall&&['open','rename','fsync','write','unlink','read'].includes(syscall)?syscall:undefined;
+ return {...(storageOperation?{storageOperation}:{}),environment:'BINANCE_TESTNET',operation:'READ_ONLY_ACCOUNT_AUDIT',stage,state:'FAIL',code,tradingEnabled:false};
 }

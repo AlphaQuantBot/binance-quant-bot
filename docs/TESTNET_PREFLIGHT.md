@@ -175,3 +175,17 @@ message. Account audit now prints only allowlisted validation/storage codes and
 phase, without paths, keys or balances in failure diagnostics. Root cause remains
 unconfirmed; do not delete journal/lock files or bypass durability checks based
 on the generic failure. Pull and repeat testnet:account in the same process env.
+
+
+### Windows account audit: EPERM on local storage
+
+Actual operator account audit reports REFRESH/LOCAL_STORAGE_EPERM after successful
+preflight. The exact filesystem syscall is not yet known. Inspection found that
+empty-ledger reconciliation unnecessarily rewrote an empty journal and fsynced
+its parent directory. An empty ledger now updates only its in-memory fresh
+snapshot; there is no reservation state to persist. Nonempty ledger and new
+reservation writes retain their durability checks and fail closed on errors.
+This removes an unnecessary write from the first read-only audit; it does not
+claim general Windows durable-write support. Safe diagnostics also include a
+fixed allowlisted syscall name if present, never filesystem paths. Pull and
+repeat testnet:account; real success remains to be confirmed on Windows.
