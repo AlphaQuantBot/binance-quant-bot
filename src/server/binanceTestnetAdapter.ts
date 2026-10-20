@@ -58,6 +58,7 @@ export function createBinanceTestnetAdapter(options: {
         ...(method === 'POST' ? {body:signed} : {}),
       });
     } catch { throw Error('EXCHANGE_TRANSPORT_UNKNOWN'); }
+    if(response.status===451)throw Error('EXCHANGE_LOCATION_RESTRICTED');
     if (response.status === 429 || response.status === 418) {
       const retryAfter = Number(response.headers.get('retry-after') ?? '60');
       const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(86400, retryAfter) : 60;

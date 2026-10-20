@@ -1,0 +1,87 @@
+# Actual Testnet connectivity attempt
+
+Observed UTC time: **2026-10-20T22:31:40.497000+00:00**.
+
+The direct real-network probes to https://testnet.binance.vision/api/v3/ping,
+/api/v3/time and /api/v3/exchangeInfo?symbol=BTCUSDT each returned HTTP 451.
+The exchange response explained that service is unavailable from the restricted
+location of this execution environment. A second HTTP client confirmed 451 for
+ping/time. These are real HTTP results, not transport fixtures. No authenticated
+account request, order submission, cancellation or replacement was performed.
+
+The actual preflight command was then run. It stopped at the first blocked public
+check. Its subsequent SKIPPED fields below mean no further requests were made by
+that command; they do not contradict the separate initial direct probes.
+
+```json
+{
+  "environment": "BINANCE_TESTNET",
+  "observedAt": 1792535500497,
+  "symbol": "BTCUSDT",
+  "credentialsConfigured": false,
+  "checks": [
+    {
+      "name": "ping",
+      "state": "BLOCKED",
+      "code": "EXCHANGE_LOCATION_RESTRICTED",
+      "httpStatus": 451
+    },
+    {
+      "name": "time",
+      "state": "SKIPPED",
+      "code": "PUBLIC_PREFLIGHT_FAILED"
+    },
+    {
+      "name": "exchangeInfo",
+      "state": "SKIPPED",
+      "code": "PUBLIC_PREFLIGHT_FAILED"
+    },
+    {
+      "name": "account",
+      "state": "SKIPPED",
+      "code": "PUBLIC_PREFLIGHT_FAILED"
+    },
+    {
+      "name": "commission",
+      "state": "SKIPPED",
+      "code": "PUBLIC_PREFLIGHT_FAILED"
+    }
+  ],
+  "publicReady": false,
+  "authenticatedReady": false,
+  "tradingEnabled": false
+}
+```
+
+Environment inspection found no APP_TESTNET_API_KEY or APP_TESTNET_SECRET_KEY,
+no local private .env configuration (only .env.example), and no testnet account
+journals. No secret values were printed or placed in this report.
+
+## Result and implementation changes
+
+The real account/trading test is **blocked, not passed**. Public API access from
+this host is restricted, and independent testnet credentials are not configured.
+There is no evidence yet about actual account balances, exchange permissions,
+real fills, stop lifecycle or continuous operation. No live routes were enabled.
+
+Added `npm run testnet:preflight`, a fixed-host read-only command. It checks ping,
+server time/clock and an explicit/default BTCUSDT symbol. If public checks pass
+and independent testnet credentials are present in private runtime variables, it
+checks account snapshot and current commission reads. It never creates an order.
+HTTP 451 is now separately named EXCHANGE_LOCATION_RESTRICTED in the adapter.
+Errors are sanitized, public checks never include secret headers, and readiness
+results distinguish public from authenticated access. No production-host fallback
+is attempted. Test symbol override: APP_TESTNET_PREFLIGHT_SYMBOL.
+
+## Next real-test requirement
+
+Run the branch on an environment permitted by Binance's service restrictions.
+Configure APP_TESTNET_API_KEY and APP_TESTNET_SECRET_KEY privately in that runtime,
+using independent Spot Testnet credentials, then run `npm run testnet:preflight`.
+Do not paste credentials into chat, logs, source files or GitHub. Share the
+sanitized preflight result to continue account-level diagnostics. Public/read
+preflight success does not bypass the still-incomplete trading/risk gates.
+
+Local regression validation after these diagnostic changes: **208 fixture tests
+passed**, TypeScript and production build passed. This is separate from the
+blocked actual-network result above.
