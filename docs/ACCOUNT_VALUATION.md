@@ -58,3 +58,19 @@ Local validation: 225 tests, TypeScript and production build passed. Actual
 operator valuation must still be run with `npm.cmd run testnet:valuation`.
 Official endpoint semantics:
 https://github.com/binance/binance-spot-api-docs/blob/master/rest-api.md
+
+
+## Actual operator batch result and remaining price coverage
+
+Operator run on b8150e9 returned 517 holdings, 500 priced, 17 unpriced,
+complete=false and currentEquityUSDT=null. No stale-price/account-change issue
+was reported. The unpriced set included fiat, small-price crypto assets and
+Unicode/numeric test assets. Names alone do not establish the reason.
+
+Use `npm.cmd run testnet:valuation-diagnostics -- ASSET1 ASSET2` to distinguish
+missing/inactive direct USDT markets, absent/zero/malformed/crossed books, and
+available inverse market metadata. This command uses two bounded public GETs,
+requires no API keys, never places orders, and never treats an inverse market
+as a validated conversion price. It reports no balances or raw book values.
+A later live snapshot may differ from the original valuation. Missing prices
+continue to block total equity and daily risk authorization.

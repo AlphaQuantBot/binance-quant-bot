@@ -24,7 +24,8 @@
     "testnet:backfill": "node --import tsx scripts/backfill_testnet_trades.ts",
     "testnet:recover-history": "node --import tsx scripts/recover_testnet_history.ts",
     "testnet:watch": "node --import tsx scripts/watch_testnet_account.ts",
-    "testnet:preflight": "node --import tsx scripts/preflight_testnet.ts"
+    "testnet:preflight": "node --import tsx scripts/preflight_testnet.ts",
+    "testnet:valuation-diagnostics": "node --import tsx scripts/diagnose_testnet_valuation.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
