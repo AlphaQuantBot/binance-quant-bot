@@ -21,7 +21,7 @@ export const defaultSettings: UserSecuritySettings = {
   simulatedBalanceUsdt: 1000.00,
   liveSpotBalanceUsdt: 0.00,
   maxDailyDrawdownPercent: 5.0,
-  autoLiveExecutionEnabled: true,
+  autoLiveExecutionEnabled: false,
   liveTradeAmountUsdt: 11.50,
   autoCompoundProfits: true,
   compoundReinvestmentRate: 100,
@@ -323,3 +323,4 @@ export function createBackupSnapshot(passphrase: string) {
     sizeBytes: jsonStr.length,
   };
 }
+

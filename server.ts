@@ -1,3 +1,4 @@
+import { liveExecutionGuard, exchangeCooldownResponse } from './src/server/executionSafety';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -16,6 +17,8 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+app.post(['/api/binance/order', '/api/binance/close-spot-position', '/api/binance/create-bnb-budget'], liveExecutionGuard);
 
 let lastBalanceCache: { time: number; apiKey: string; exchange: string; data: any } | null = null;
 let activeServerCredentials: { apiKey: string; secretKey: string; exchange: string; updatedAt: number; liveBalance?: number; availableCash?: number } | null = null;
@@ -806,45 +809,7 @@ app.post('/api/binance/order', async (req: Request, res: Response) => {
 
     // If rate limit cooldown active on Binance Global, process order seamlessly without crashing
     if (Date.now() < ipBannedUntil) {
-      const remainingSec = Math.max(1, Math.round((ipBannedUntil - Date.now()) / 1000));
-      const creds = getActiveCredentials();
-      const vaultTotal = creds?.liveBalance || 39.50;
-      // GÜN İÇİ RİSK VE SERMAYE YÖNETİMİ: Tek bir tokene kasanın tamamını bağlamayı kesin olarak engelle!
-      // Maksimum tek işlem büyüklüğü: Kasanın max %25'i (max $14 USDT, min $10)
-      const maxAllowedSingleTrade = Math.max(10.0, Math.min(14.0, parseFloat((vaultTotal * 0.25).toFixed(2))));
-      const rawRequested = parseFloat(quoteOrderQty || '12.0') || 12.0;
-      const tradeUsdt = Math.max(10.0, Math.min(maxAllowedSingleTrade, rawRequested));
-
-      if (creds && typeof creds.availableCash === 'number') {
-        if (side.toUpperCase() === 'BUY') {
-          // Nakit rezervi koruması: Kasanın en az %15'i (~$8.50 USDT) nakitte serbest kalmalı
-          const minReserve = Math.max(7.50, parseFloat((vaultTotal * 0.15).toFixed(2)));
-          if (creds.availableCash - tradeUsdt < 1.0 && creds.availableCash <= minReserve) {
-            return res.status(400).json({
-              success: false,
-              error: `Portföy Risk Kalkanı: Kasanın %15'i ($${minReserve} USDT) serbest nakit rezervi olarak korunmaktadır. Tek bir tokene daha fazla sermaye bağlanamaz. Açık pozisyonlardan birinin satılması bekleniyor.`
-            });
-          }
-          creds.availableCash = Math.max(0, Math.min(vaultTotal, parseFloat((creds.availableCash - tradeUsdt).toFixed(2))));
-        } else if (side.toUpperCase() === 'SELL') {
-          creds.availableCash = Math.min(vaultTotal, parseFloat((creds.availableCash + tradeUsdt).toFixed(2)));
-        }
-        try {
-          fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8');
-        } catch {}
-      }
-      return res.json({
-        success: true,
-        orderId: `GLOBAL-SPOT-${Date.now()}`,
-        status: 'FILLED',
-        simulated: true,
-        symbol: safeSymbol,
-        side,
-        type,
-        executedQty: resolvedQuantity || (tradeUsdt / (parseFloat(price || '1') || 1)).toFixed(4),
-        cummulativeQuoteQty: tradeUsdt.toString(),
-        message: `Emir Binance Global canlı tahta kotasyonlarıyla başarıyla işlendi (Borsa geçici bekleme koruması: ${remainingSec} sn).`
-      });
+      return res.status(503).json(exchangeCooldownResponse(ipBannedUntil));
     }
 
     // Auto-adjust quantities based on real live wallet balances to eliminate -2010 errors
@@ -1190,27 +1155,8 @@ app.post('/api/binance/close-spot-position', async (req: Request, res: Response)
   const targetSymbol = `${baseCoin}USDT`;
 
   if (Date.now() < ipBannedUntil) {
-    const creds = getActiveCredentials();
-    const ticker = cachedTickersMap.get(targetSymbol) || cachedTickers.find(t => t.symbol === targetSymbol);
-    const p = ticker ? (parseFloat(ticker.lastPrice) || 0.03884) : 0.03884;
-    const vault = creds?.liveBalance || 39.50;
-    const estProceeds = vault;
-    if (creds) {
-      creds.availableCash = vault;
-      try {
-        fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8');
-      } catch {}
+      return res.status(503).json(exchangeCooldownResponse(ipBannedUntil));
     }
-    lastBalanceCache = null;
-    return res.json({
-      success: true,
-      orderId: `SPOT-CLOSED-${Date.now()}`,
-      symbol: targetSymbol,
-      executedQty: (estProceeds / (p || 1)).toFixed(2),
-      cummulativeQuoteQty: estProceeds.toString(),
-      message: `${baseCoin} pozisyonu piyasa fiyatından başarıyla satıldı ve serbest nakit ($${vault.toFixed(2)} USDT) cüzdana aktarıldı.`
-    });
-  }
 
   try {
     // --- ASLA ZARARINA SATMA & REBALANCE KORUMASI ---
@@ -1360,61 +1306,8 @@ app.post('/api/binance/create-bnb-budget', async (req: Request, res: Response) =
 
   // If rate limit active, return simulated success and update credentials cache
   if (Date.now() < ipBannedUntil) {
-    if (creds && typeof creds.availableCash === 'number') {
-      creds.availableCash = Math.max(0, parseFloat((creds.availableCash - cost).toFixed(2)));
-      try {
-        fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8');
-      } catch {}
+      return res.status(503).json(exchangeCooldownResponse(ipBannedUntil));
     }
-    const effCash = creds?.availableCash ?? Math.max(0, 3.04 - cost);
-    const effVault = creds?.liveBalance ?? 39.50;
-    lastBalanceCache = {
-      time: Date.now(),
-      apiKey,
-      exchange: exchange || 'BINANCE',
-      data: {
-        success: true,
-        canTrade: true,
-        totalSpotVaultUsdt: effVault,
-        liveSpotBalanceUsdt: effVault,
-        availableCashUsdt: effCash,
-        freeUsdt: effVault,
-        freeTry: 0,
-        isBinanceTR: false,
-        exchange: 'BINANCE',
-        isCooldown: true,
-        cooldownRemainingSec: Math.max(1, Math.round((ipBannedUntil - Date.now()) / 1000)),
-        message: `BNB Komisyon Kalkanı başarıyla oluşturuldu (%25 komisyon indirimi aktif: 0.075%).`,
-        bnbBudget: {
-          freeBnb: estBnb,
-          bnbPrice,
-          bnbUsdValue: cost,
-          discountActive: true,
-          discountRate: '0.075%',
-          standardRate: '0.10%',
-          estimatedTradesRemaining: Math.floor(cost / 0.035),
-          totalSavedUsdt: 4.85
-        },
-        balances: [
-          { asset: 'USDT', free: effCash, locked: 0, estimatedUsd: effCash, symbol: 'USDTUSDT', currentPrice: 1 },
-          { asset: 'BNB', free: estBnb, locked: 0, estimatedUsd: cost, symbol: 'BNBUSDT', currentPrice: bnbPrice }
-        ]
-      }
-    };
-    return res.json({
-      success: true,
-      orderId: `BNB-BUDGET-${Date.now()}`,
-      status: 'FILLED',
-      simulated: true,
-      executedQty: estBnb.toString(),
-      cummulativeQuoteQty: budgetUsdt,
-      freeBnb: estBnb,
-      bnbPrice,
-      bnbUsdValue: cost,
-      newAvailableCash: effCash,
-      message: `🛡️ BNB Komisyon Kalkanı başarıyla oluşturuldu! ${budgetUsdt} USDT değerinde BNB ayrıldı. Komisyon oranı %0.10 yerine %0.075 olarak (%25 indirimli) uygulanacaktır.`
-    });
-  }
 
   // Execute market buy on BNBUSDT
   const qObj: Record<string, string> = {
@@ -2145,3 +2038,4 @@ async function startServer() {
 startServer().catch(err => {
   console.error('Failed to start server:', err);
 });
+

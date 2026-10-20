@@ -1068,6 +1068,8 @@ export default function App() {
     const currentPrices = pricesMapRef.current;
     const currentSet = settingsRef.current;
     const isLive = currentSet.tradingMode === 'LIVE_API';
+    // Phase 1: prevent all live bot paths from mutating local balances, positions or PnL.
+    if (isLive) return;
     const now = Date.now();
 
     setEngineTickCount(prev => prev + 1);
@@ -2065,6 +2067,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#060911] text-slate-100 flex flex-col font-sans">
+      <div role="status" className="border-b border-amber-500/40 bg-amber-950/60 px-4 py-3 text-sm text-amber-200">
+        {settings.language === 'tr'
+          ? 'Canlı emir yürütme geçici olarak durduruldu. Paper mod kullanılabilir. Mevcut borsa pozisyonlarınızı borsadan takip edin; bu sürüm otomatik koruma emri göndermez.'
+          : 'Live execution is temporarily paused. Paper mode is available. Manage existing positions on the exchange; this version does not submit protective orders.'}
+      </div>
       {/* 2FA PIN Lock Screen Modal */}
       {isLocked && (
         <TwoFactorModal
@@ -2408,3 +2415,4 @@ export default function App() {
     </div>
   );
 }
+
