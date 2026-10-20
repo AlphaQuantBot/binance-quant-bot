@@ -1,5 +1,7 @@
 # ⚡ Binance Autonomous Quant Scalper & Multi-Bot Platform
 
+> **Development preview:** Live execution is paused in this branch. Operator authentication and an encrypted credential vault must be configured before private APIs can be used. This is a single-operator test build; legacy performance and zero-loss claims below are not validated. See [operator setup](docs/OPERATOR_SECURITY.md) and [execution pause](docs/LIVE_EXECUTION_PAUSE.md).
+
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
@@ -54,7 +56,7 @@ Bu bot platformunu **ömür boyu ücretsiz** kullanmak ve borsa işlemlerinizde 
 ## 🚀 Hızlı Kurulum (Quick Start)
 
 ### Gereksinimler
-* [Node.js](https://nodejs.org/) v18.0.0 veya üzeri
+* [Node.js](https://nodejs.org/) v24 (bu dalda test edilen sürüm)
 * Binance veya Binance TR hesabı
 
 ### 1. Repoyu Klonlayın
@@ -85,14 +87,14 @@ Tarayıcınızda `http://localhost:3000` adresine gidin.
    * ✅ **Spot ve Margin Alım-Satım (Enable Spot & Margin Trading)**: AÇIK
    * ❌ **Para Çekme (Enable Withdrawals)**: **KESİNLİKLE KAPALI**
 4. Programda sağ üstteki **"API Bağla"** veya **"Güvenlik & Ayarlar"** sekmesinden API Key ve Secret Key bilginizi girin.
-5. İster Simülasyon (Paper) modunda test edin, isterseniz Canlı Modda botları devreye alın.
+5. Bu geliştirme dalında yalnızca Paper modunu test edin. Canlı emir gönderimi geçici koruma ile kapalıdır.
 
 ---
 
 ## 🔒 Güvenlik Standartları (Security First)
 
 * **Sıfır Çekim Yetkisi:** Bot hiçbir zaman para çekme iznine ihtiyaç duymaz; paranız Binance güvencesindedir.
-* **Lokal & Gizli Saklama:** API anahtarlarınız asla uzak bir üçüncü taraf sunucuya gönderilmez; yalnızca kendi yerel oturumunuzda ve şifreli depolanır.
+* **Lokal & Gizli Saklama:** API anahtarları bağlantı testi sırasında tarayıcı belleğinde bulunabilir ve kimliği doğrulanmış terminal sunucusuna gönderilir. Sunucuda AES-256-GCM ile şifreli saklanır; localStorage kaydına yazılmaz ve API yanıtında geri verilmez. Kurulum için docs/OPERATOR_SECURITY.md dosyasını okuyun.
 * **Git Koruması:** `.gitignore` dosyası API anahtarlarını ve cüzdan verilerini içerebilecek yerel dosyaları otomatik olarak hariç tutar.
 
 ---
@@ -105,3 +107,4 @@ Tarayıcınızda `http://localhost:3000` adresine gidin.
 
 ## 📄 Lisans
 Bu proje [MIT Lisansı](LICENSE) kapsamında lisanslanmıştır.
+

@@ -1,3 +1,4 @@
+import { safeSettings } from './safeSettings';
 import { UserSecuritySettings, BotInstance, TradeOrder, AppNotification } from '../types/crypto';
 
 const STORAGE_KEYS = {
@@ -12,7 +13,7 @@ export const defaultSettings: UserSecuritySettings = {
   tradingMode: 'PAPER',
   binanceApiKey: '',
   binanceSecretKey: '',
-  isKeysEncrypted: true,
+  isKeysEncrypted: false,
   is2FAEnabled: false,
   pinHash: '',
   isAppLocked: false,
@@ -170,7 +171,9 @@ export function loadSecuritySettings(): UserSecuritySettings {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (!data) return defaultSettings;
-    const parsed = JSON.parse(data);
+    const parsed = safeSettings(JSON.parse(data));
+    // Scrub legacy plaintext secrets before returning any settings.
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
     const res = { ...defaultSettings, ...parsed };
     // Clear out stale hardcoded placeholders so real Binance balance can take effect
     if (res.liveSpotBalanceUsdt === 0.84 || res.liveSpotBalanceUsdt === 58.53 || res.liveSpotBalanceUsdt === 57.73) {
@@ -191,7 +194,7 @@ export function loadSecuritySettings(): UserSecuritySettings {
 
 export function saveSecuritySettings(settings: UserSecuritySettings) {
   try {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(safeSettings(settings as unknown as Record<string, unknown>)));
   } catch (err) {
     console.error('Failed to save settings:', err);
   }

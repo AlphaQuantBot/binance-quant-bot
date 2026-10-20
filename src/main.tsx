@@ -1,10 +1,12 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { OperatorGate } from './components/OperatorGate';
 import './index.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <OperatorGate><App /></OperatorGate>
   </StrictMode>,
 );
+

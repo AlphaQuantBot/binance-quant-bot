@@ -25,7 +25,7 @@ test('all live mutation routes fail closed, without reaching exchange or changin
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     for (const path of paths) {
-      const response = await fetch(`http://127.0.0.1:${address.port}${path}`, { method: 'POST' });
+      const response: globalThis.Response = await fetch(`http://127.0.0.1:${address.port}${path}`, { method: 'POST' });
       assert.equal(response.status, 503);
       const body = await response.json();
       assert.equal(body.success, false);

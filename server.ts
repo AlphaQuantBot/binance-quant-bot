@@ -1,3 +1,5 @@
+import { createOperatorAuth } from './src/server/operatorAuth';
+import { createCredentialVault, credentialStatus } from './src/server/credentialVault';
 import { liveExecutionGuard, exchangeCooldownResponse } from './src/server/executionSafety';
 import express, { Request, Response } from 'express';
 import path from 'path';
@@ -11,12 +13,13 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const CREDENTIALS_FILE = path.join(__dirname, '.server_credentials.json');
+const credentialVault = createCredentialVault(path.join(__dirname, '.server_credentials.enc'), process.env.APP_CREDENTIALS_KEY);
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '16kb' }));
+app.use('/api', createOperatorAuth({ passwordHash: process.env.APP_AUTH_PASSWORD_HASH, appUrl: process.env.APP_URL, production: process.env.NODE_ENV === 'production' }));
 
 app.post(['/api/binance/order', '/api/binance/close-spot-position', '/api/binance/create-bnb-budget'], liveExecutionGuard);
 
@@ -28,22 +31,10 @@ let cachedTickersMap = new Map<string, any>();
 let cachedTickers: any[] = [];
 let lastTickersFetch = 0;
 
-// Dynamically retrieve persisted server credentials
+// Secrets are encrypted on disk and never returned to the browser.
 function getActiveCredentials() {
-  try {
-    if (fs.existsSync(CREDENTIALS_FILE)) {
-      const raw = fs.readFileSync(CREDENTIALS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.apiKey && parsed.secretKey) {
-        // Enforce sanity: availableCash cannot exceed liveBalance
-        const maxVault = typeof parsed.liveBalance === 'number' && parsed.liveBalance > 0 ? parsed.liveBalance : 39.50;
-        if (typeof parsed.availableCash === 'number') {
-          parsed.availableCash = Math.min(parsed.availableCash, maxVault);
-        }
-        activeServerCredentials = parsed;
-      }
-    }
-  } catch {}
+  try { activeServerCredentials = credentialVault.load(); }
+  catch { activeServerCredentials = null; }
   return activeServerCredentials;
 }
 getActiveCredentials();
@@ -281,46 +272,25 @@ app.get('/api/binance/ping', async (_req: Request, res: Response) => {
 
 // 0.08 Server-side API Credentials State (Preserves credentials across tab reloads)
 app.get('/api/binance/config', (_req: Request, res: Response) => {
-  const creds = getActiveCredentials();
-  return res.json({
-    success: true,
-    configured: !!creds,
-    exchange: creds?.exchange || 'BINANCE',
-    apiKey: creds?.apiKey || '',
-    secretKey: creds?.secretKey || '',
-    keySnippet: creds ? `${creds.apiKey.slice(0, 4)}...${creds.apiKey.slice(-4)}` : null,
-    updatedAt: creds?.updatedAt || null,
-    liveBalance: creds?.liveBalance ?? null,
-    availableCash: creds?.availableCash ?? null
-  });
+  try { return res.json(credentialStatus(credentialVault.load(), credentialVault.configured)); }
+  catch { return res.status(503).json({ success: false, code: 'VAULT_UNAVAILABLE' }); }
 });
 
 app.post('/api/binance/config', (req: Request, res: Response) => {
   const { apiKey, secretKey, exchange } = req.body;
-  if (!apiKey || !secretKey) {
-    activeServerCredentials = null;
-    try {
-      if (fs.existsSync(CREDENTIALS_FILE)) fs.unlinkSync(CREDENTIALS_FILE);
-    } catch {}
-    return res.json({ success: true, configured: false, message: 'Anahtarlar temizlendi.' });
-  }
-  activeServerCredentials = {
-    apiKey: apiKey.trim(),
-    secretKey: secretKey.trim(),
-    exchange: exchange || 'BINANCE',
-    updatedAt: Date.now(),
-    liveBalance: 39.50,
-    availableCash: 3.04
-  };
+  if (!credentialVault.configured) return res.status(503).json({ success: false, code: 'VAULT_NOT_CONFIGURED' });
   try {
-    fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(activeServerCredentials, null, 2), 'utf-8');
-  } catch {}
-  return res.json({
-    success: true,
-    configured: true,
-    exchange: activeServerCredentials.exchange,
-    message: 'Binance API anahtarları sunucu oturumuna güvenle kaydedildi.'
-  });
+    if (!apiKey && !secretKey) {
+      credentialVault.clear(); activeServerCredentials = null; lastBalanceCache = null;
+      return res.json({ success: true, configured: false });
+    }
+    if (typeof apiKey !== 'string' || typeof secretKey !== 'string' || !apiKey.trim() || !secretKey.trim() || apiKey.length > 512 || secretKey.length > 512 || !['BINANCE', 'BINANCE_TR'].includes(exchange || 'BINANCE')) {
+      return res.status(400).json({ success: false, code: 'INVALID_CREDENTIAL_INPUT' });
+    }
+    const next = { apiKey: apiKey.trim(), secretKey: secretKey.trim(), exchange: exchange || 'BINANCE', updatedAt: Date.now() };
+    credentialVault.save(next); activeServerCredentials = next; lastBalanceCache = null;
+    return res.json(credentialStatus(next, true));
+  } catch { return res.status(503).json({ success: false, code: 'VAULT_UNAVAILABLE' }); }
 });
 
 // 0.09 Manual & Bot Vault Cash Synchronizer
@@ -335,7 +305,7 @@ app.post('/api/binance/sync-vault-cash', (req: Request, res: Response) => {
       creds.liveBalance = liveBalance;
     }
     try {
-      fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8');
+      credentialVault.save(creds);
     } catch {}
     lastBalanceCache = null;
     return res.json({ success: true, availableCash: creds.availableCash, liveBalance: creds.liveBalance });
@@ -747,7 +717,7 @@ app.post('/api/binance/account', async (req: Request, res: Response) => {
       activeServerCredentials.liveBalance = roundedTotalUsd;
       activeServerCredentials.availableCash = usdtFree;
       try {
-        fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(activeServerCredentials, null, 2), 'utf-8');
+        credentialVault.save(activeServerCredentials);
       } catch {}
     }
 
@@ -1112,7 +1082,7 @@ app.post('/api/binance/order', async (req: Request, res: Response) => {
           }
         }
         try {
-          fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8');
+          credentialVault.save(creds);
         } catch {}
       }
       return res.json({
@@ -1264,7 +1234,7 @@ app.post('/api/binance/close-spot-position', async (req: Request, res: Response)
         const vault = creds.liveBalance || 39.50;
         const gained = parseFloat(orderResultData.cummulativeQuoteQty || '0');
         creds.availableCash = Math.min(vault, parseFloat(((creds.availableCash || 0) + (gained > 0 ? gained : vault)).toFixed(2)));
-        try { fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8'); } catch {}
+        try { credentialVault.save(creds); } catch {}
       }
       return res.json({
         success: true,
@@ -1341,7 +1311,7 @@ app.post('/api/binance/create-bnb-budget', async (req: Request, res: Response) =
         if (creds && typeof creds.availableCash === 'number') {
           creds.availableCash = Math.max(0, parseFloat((creds.availableCash - cost).toFixed(2)));
           try {
-            fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), 'utf-8');
+            credentialVault.save(creds);
           } catch {}
         }
         return res.json({

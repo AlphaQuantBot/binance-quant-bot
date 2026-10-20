@@ -14,3 +14,7 @@ coverage/
 *.tgz
 *.zip
 
+
+
+.server_credentials.enc
+.server_credentials.enc.*.tmp

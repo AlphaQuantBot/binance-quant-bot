@@ -1,3 +1,4 @@
+import { safeSettings } from './utils/safeSettings';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Ticker, 
@@ -205,42 +206,13 @@ export default function App() {
     saveSecuritySettings(settings);
   }, [settings]);
 
-  // Two-way server credentials sync with local disk vault
+  // Read metadata only. Saved exchange secrets stay on the server.
   useEffect(() => {
-    fetch('/api/binance/config')
-      .then(r => r.json())
-      .then(data => {
-        if (data && data.success && data.configured && data.apiKey) {
-          setSettings(prev => {
-            const hasNewCreds = prev.binanceApiKey !== data.apiKey || prev.exchange !== (data.exchange || 'BINANCE');
-            const liveBal = typeof data.liveBalance === 'number' && data.liveBalance > 0 ? data.liveBalance : prev.liveSpotBalanceUsdt;
-            const availCash = typeof data.availableCash === 'number' && data.availableCash >= 0 ? data.availableCash : prev.availableCashUsdt;
-            if (hasNewCreds || prev.liveSpotBalanceUsdt !== liveBal || prev.availableCashUsdt !== availCash) {
-              return {
-                ...prev,
-                exchange: (data.exchange as any) || 'BINANCE',
-                binanceApiKey: data.apiKey,
-                binanceSecretKey: data.secretKey || prev.binanceSecretKey,
-                liveSpotBalanceUsdt: liveBal,
-                availableCashUsdt: availCash,
-                liveSpotBalanceTry: undefined
-              };
-            }
-            return prev;
-          });
-        } else if (settings.binanceApiKey && settings.binanceSecretKey) {
-          fetch('/api/binance/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              apiKey: settings.binanceApiKey,
-              secretKey: settings.binanceSecretKey,
-              exchange: settings.exchange || 'BINANCE'
-            })
-          }).catch(() => {});
-        }
-      })
-      .catch(() => {});
+    fetch('/api/binance/config').then(r => r.json()).then(data => {
+      if (data?.success && data.configured) {
+        setSettings(prev => ({ ...prev, exchange: data.exchange || prev.exchange }));
+      }
+    }).catch(() => {});
   }, []);
 
   // Fetch Binance Tickers
@@ -2054,7 +2026,7 @@ export default function App() {
   const handleRestoreBackup = (jsonContent: string) => {
     try {
       const parsed = JSON.parse(jsonContent);
-      if (parsed.settings) setSettings(parsed.settings);
+      if (parsed.settings) setSettings({ ...defaultSettings, ...safeSettings(parsed.settings) } as UserSecuritySettings);
       if (Array.isArray(parsed.bots)) setBots(parsed.bots);
       if (Array.isArray(parsed.orders)) setOrders(parsed.orders);
     } catch (err) {
@@ -2068,7 +2040,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#060911] text-slate-100 flex flex-col font-sans">
       <div role="status" className="border-b border-amber-500/40 bg-amber-950/60 px-4 py-3 text-sm text-amber-200">
-        {settings.language === 'tr'
+        {(navigator.language || '').toLowerCase().startsWith('tr')
           ? 'Canlı emir yürütme geçici olarak durduruldu. Paper mod kullanılabilir. Mevcut borsa pozisyonlarınızı borsadan takip edin; bu sürüm otomatik koruma emri göndermez.'
           : 'Live execution is temporarily paused. Paper mode is available. Manage existing positions on the exchange; this version does not submit protective orders.'}
       </div>
