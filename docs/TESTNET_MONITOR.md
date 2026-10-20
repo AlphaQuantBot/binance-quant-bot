@@ -30,7 +30,7 @@ exchange history visibility is final. Existing backfill request/trade bounds and
 Each cycle first attempts current account valuation and writes a separate equity
 observation journal. Valuation failures are reported as unconfirmed. Local journal
 write/validation failures stop the process rather than silently discarding data.
-History recovery follows using a persisted per-symbol nextTime and active scope.
+Timed interval reconciliation receives the first recovery slot when pending; historical backlog scanning uses the remaining per-cycle budget. Backlog scanning uses a persisted per-symbol nextTime and active scope.
 Active scope is fsynced before any network read; restart retries the same exact
 bounds even when wall time advances. Only matching stable symbol/window/account
 results advance the cursor to endTime+1. Failed, changing or conflicted windows
@@ -42,9 +42,10 @@ Default private files (all ignored by git, including lock/temp files):
 - .testnet_monitor_state.json — durable scheduler cursor/config
 - .testnet_monitor_equity.json — separate equity observations
 - .testnet_history_recovery.json — shared scoped recovery journal
+- .testnet_monitor_intervals.json — fixed balance-checkpoint pairs and scoped interval audits
 
 Override with APP_TESTNET_MONITOR_STATE, APP_TESTNET_MONITOR_EQUITY and
-APP_TESTNET_RECOVERY_JOURNAL. All instances for the same workload must share paths;
+APP_TESTNET_RECOVERY_JOURNAL; APP_TESTNET_MONITOR_INTERVALS selects the interval journal. All instances for the same workload must share paths;
 arbitrarily different journals do not give account-wide process exclusion. The
 separate monitor-equity file avoids erasing diagnostic activity cursors maintained
 by testnet:activity. Do not point it at that activity file.
@@ -57,9 +58,47 @@ configured testnet check use one cycle before continuous operation.
 
 This is a REST observation/recovery worker, not an order engine, service deployment
 or WebSocket consumer. Cursors describe only configured symbol enumeration. It
-does not automatically merge history with timed native balance events, discover
+does not establish atomic full-account event coverage, discover
 all account symbols, resolve testnet resets, backfill midnight baseline/flows,
 clear account history gaps or create daily-risk evidence. Reports retain
 accountGapClosed:false and dailyRiskAuthorized:false. Actual configured testnet
 execution has not occurred in this session; fixtures validate scheduling/restart
 and failure behavior without network requests or real credentials.
+
+
+## Bind observed balances to scoped recovered fills
+
+The observer now retains a first complete balance checkpoint, then freezes the
+next complete checkpoint as a pending pair. Later observations still enter the
+equity journal but do not overwrite this pair. After settlement lag, at most one
+configured symbol is recovered for the fixed interval per cycle. This consumes
+one shared recovery slot before backlog work, avoiding starvation at a one-window
+cycle budget. A completed cached set is finalized without another read after a
+crash between report persistence and audit finalization.
+
+Recovered history must cover from the first checkpoint's REST read start through
+the second checkpoint's read completion. Trades during either checkpoint's read
+window are BOUNDARY_ACTIVITY_AMBIGUOUS: REST reads cannot determine on which side
+of the balance boundary a fill appeared. A valid interior interval compares exact
+BUY/SELL and native fee deltas against all observed free+locked balance changes.
+Nonzero holdings outside the configured pair assets are UNMONITORED_HOLDINGS.
+Residual differences are UNEXPLAINED_INTERVAL_CHANGE. Missing/unconfirmed symbol
+history never advances the baseline. More than 24 hours between checkpoints
+requires review rather than pretending one supported API window covers it.
+
+Only MATCHED_SCOPED_INTERVAL advances the checkpoint to the already frozen second
+observation. Ambiguous/unmonitored/unexplained results freeze the interval for
+review across restart. No automatic reset/resume endpoint is supplied. Saved
+blocked audits are recomputed from retained balances/trades on load; stored
+"success" text cannot authorize advancement. Checkpoints use normalized balances
+and account-bound digests. This compact journal retains the current checkpoint
+pair and latest audit; it is not an append-only complete historical event log.
+
+This associates diagnostic recovered fills (including manual fills on configured
+symbols) with observed native changes, without adopting local bot orders or
+clearing unknown orders/equity history gaps. Two equal history reads may still
+omit late records. A net match cannot rule out offsetting unseen activity or
+trades on unconfigured pairs with zero final holdings. All results therefore keep
+accountGapClosed:false and dailyRiskAuthorized:false. Full account symbol
+discovery, event replay/reset detection and real end-to-end Testnet validation
+remain outstanding.

@@ -31,3 +31,5 @@ coverage/
 
 .testnet_monitor_state.json*
 .testnet_monitor_equity.json*
+
+.testnet_monitor_intervals.json*

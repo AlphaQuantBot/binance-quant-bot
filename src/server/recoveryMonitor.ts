@@ -20,12 +20,13 @@ export class RecoveryMonitor{
   }}catch(e){fs.closeSync(this.fd);fs.unlinkSync(file+'.lock');throw e;}
  }
  private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,config:this.config,cursors:this.cursors,turn:this.turn,lastTick:this.lastTick}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
- async tick(){
+ async tick(maxWork=this.config.maxWindowsPerCycle){
+  if(!Number.isInteger(maxWork)||maxWork<0||maxWork>this.config.maxWindowsPerCycle)throw Error('INVALID_MONITOR_CYCLE_BUDGET');
   if(this.closed)throw Error('MONITOR_CLOSED');if(this.busy)throw Error('MONITOR_BUSY');const startedAt=this.now();if(!Number.isSafeInteger(startedAt)||startedAt<this.lastTick||startedAt<this.config.startTime)throw Error('MONITOR_CLOCK_REGRESSED');
   this.busy=true;this.lastTick=startedAt;
   try{
    this.persist();const cutoff=startedAt-this.config.settlementLagMs;const events:Array<Scope&{state:string}>=[];let visited=0;
-   while(visited<this.cursors.length&&events.length<this.config.maxWindowsPerCycle){
+   while(visited<this.cursors.length&&events.length<maxWork){
     const c=this.cursors[this.turn];visited++;this.turn=(this.turn+1)%this.cursors.length;
     if(!c.active&&c.nextTime>cutoff)continue;
     if(!c.active)c.active={symbol:c.symbol,startTime:c.nextTime,endTime:Math.min(cutoff,c.nextTime+this.config.windowMs-1)};
