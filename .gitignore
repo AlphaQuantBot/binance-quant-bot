@@ -28,3 +28,6 @@ coverage/
 .testnet_equity_history.json*
 
 .testnet_history_recovery.json*
+
+.testnet_monitor_state.json*
+.testnet_monitor_equity.json*

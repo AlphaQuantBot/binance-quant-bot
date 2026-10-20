@@ -22,7 +22,8 @@
     "testnet:equity-record": "node --import tsx scripts/record_testnet_equity.ts",
     "testnet:activity": "node --import tsx scripts/record_testnet_activity.ts",
     "testnet:backfill": "node --import tsx scripts/backfill_testnet_trades.ts",
-    "testnet:recover-history": "node --import tsx scripts/recover_testnet_history.ts"
+    "testnet:recover-history": "node --import tsx scripts/recover_testnet_history.ts",
+    "testnet:watch": "node --import tsx scripts/watch_testnet_account.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
