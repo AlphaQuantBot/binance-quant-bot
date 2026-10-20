@@ -1,3 +1,4 @@
+import { rulesFixture, policyFixture } from './fixtures/trading';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ import { accountDiscrepancies, type AccountSnapshot } from '../src/server/accoun
 import { settleTrades } from '../src/server/tradeSettlement';
 import type { Intent, Confirmation } from '../src/server/orderExecution';
 const accountId='testnet_fixture';
-const intent:Intent={requestId:'request_0001',accountId,symbol:'BTCUSDT',side:'BUY',quantity:'2'};
+const intent:Intent={requestId:'request_0001',accountId,symbol:'BTCUSDT',side:'BUY',quantity:'2',limitPrice:'100'};
 const plan:FundingPlan={baseAsset:'BTC',quoteAsset:'USDT',buyQuoteBudget:'200',feeDebits:[{asset:'USDT',amount:'1'}]};
 const snapshot=(patch:Partial<AccountSnapshot>={}):AccountSnapshot=>({environment:'BINANCE_TESTNET',accountId,startedAt:1000,observedAt:1001,canTrade:true,balances:[{asset:'USDT',free:'1000',locked:'0'},{asset:'BTC',free:'10',locked:'0'}],openOrders:[],...patch});
 const confirmation=(i:Intent,id:string,patch:Partial<Confirmation>={}):Confirmation=>{
@@ -44,8 +45,8 @@ test('external/manual open order and unknown local order block readiness',()=>{
 });
 function funded(overrides:Partial<AccountAdapter>={},now=()=>1002){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aq-funded-'));let latest:Confirmation|undefined,calls=0;
- const adapter:AccountAdapter={submit:async(i,id)=>{calls++;latest=confirmation(i,id);return latest;},query:async()=>latest??null,accountSnapshot:async()=>snapshot(),...overrides};
- const create=()=>new FundedExecution(path.join(dir,'orders'),path.join(dir,'capital'),accountId,adapter,now);
+ const adapter:AccountAdapter={tradeContext:async()=>rulesFixture(),submit:async(i,id)=>{calls++;latest=confirmation(i,id);return latest;},query:async()=>latest??null,accountSnapshot:async()=>snapshot(),...overrides};
+ const create=()=>new FundedExecution(path.join(dir,'orders'),path.join(dir,'capital'),accountId,adapter,now,policyFixture());
  return {dir,adapter,engine:create(),create,calls:()=>calls};
 }
 function cleanFunded(s:ReturnType<typeof funded>){s.engine.close();fs.rmSync(s.dir,{recursive:true,force:true});}
@@ -53,7 +54,7 @@ test('funded engine requires refresh, reserves before sending, invalidates balan
  const s=funded();try{await assert.rejects(s.engine.submit(intent,plan),/FRESH_ACCOUNT/);assert.equal(s.calls(),0);assert.equal((await s.engine.refresh()).ready,true);await s.engine.submit(intent,plan);assert.equal(s.calls(),1);assert.throws(()=>s.engine.available('USDT'),/FRESH_ACCOUNT/);await s.engine.submit(intent,plan);assert.equal(s.calls(),1);}finally{cleanFunded(s);}
 });
 test('capital and fee budget must both fit; sell reserves actual base units',async()=>{
- const s=funded();try{await s.engine.refresh();await assert.rejects(s.engine.submit(intent,{...plan,buyQuoteBudget:'1000'}),/INSUFFICIENT/);await assert.rejects(s.engine.submit(intent,{...plan,feeDebits:[{asset:'BNB',amount:'0.1'}]}),/UNAVAILABLE/);assert.equal(s.calls(),0);await s.engine.submit({...intent,side:'SELL'},plan);assert.equal(s.calls(),1);}finally{cleanFunded(s);}
+ const s=funded();try{await s.engine.refresh();await assert.rejects(s.engine.submit(intent,{...plan,buyQuoteBudget:'1000'}),/INSUFFICIENT/);await s.engine.refresh();await assert.rejects(s.engine.submit(intent,{...plan,feeDebits:[{asset:'BNB',amount:'0.1'}]}),/UNAVAILABLE/);assert.equal(s.calls(),0);await s.engine.refresh();await s.engine.submit({...intent,side:'SELL'},plan);assert.equal(s.calls(),1);}finally{cleanFunded(s);}
 });
 test('fresh exchange snapshot settles spent holds without double subtraction after restart',async()=>{
  const s=funded({accountSnapshot:async()=>snapshot({balances:[{asset:'USDT',free:'799.9',locked:'0'},{asset:'BTC',free:'12',locked:'0'}]})});try{await s.engine.refresh();await s.engine.submit(intent,plan);s.engine.close();s.engine=s.create();assert.throws(()=>s.engine.available('USDT'),/FRESH_ACCOUNT/);assert.equal((await s.engine.refresh()).ready,true);assert.equal(s.engine.available('USDT'),'799.9');assert.equal(s.calls(),1);}finally{cleanFunded(s);}

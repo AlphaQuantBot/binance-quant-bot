@@ -1,3 +1,4 @@
+import { validateTradeContext, type TradeContext } from './tradingRules';
 import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
 import { createHash, createHmac } from 'node:crypto';
 import type { Adapter, Intent, Confirmation, Status } from './orderExecution';
@@ -17,6 +18,7 @@ function object(value: unknown): any {
 function normalize(raw: unknown, intent: Intent, clientOrderId: string): Confirmation {
   const r = object(raw);
   if (r.symbol !== intent.symbol || r.side !== intent.side || r.clientOrderId !== clientOrderId || !STATUSES.has(r.status) || units(r.origQty) !== units(intent.quantity)) throw Error('ORDER_IDENTITY_MISMATCH');
+  if(intent.limitPrice!==undefined&&(r.type!=='LIMIT'||r.timeInForce!=='IOC'||units(r.price)!==units(intent.limitPrice)))throw Error('ORDER_LIMIT_MISMATCH');
   const updateTime = r.updateTime ?? r.transactTime;
   if (!Number.isSafeInteger(updateTime) || updateTime < 0) throw Error('INVALID_EXCHANGE_TIME');
   const executed = units(r.executedQty), quote = units(r.cummulativeQuoteQty), requested = units(intent.quantity);
@@ -27,7 +29,7 @@ export function testnetAccountId(apiKey: string) { return 'testnet_' + createHas
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
   apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
-}): Adapter & { accountSnapshot(): Promise<AccountSnapshot> } {
+}): Adapter & { accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -37,17 +39,17 @@ export function createBinanceTestnetAdapter(options: {
     if (i.accountId !== accountId) throw Error('TESTNET_ACCOUNT_MISMATCH');
     if (!/^[A-Z0-9]{5,24}$/.test(i.symbol) || !['BUY','SELL'].includes(i.side) || !/^aq_[a-f0-9]{32}$/.test(clientId) || units(i.quantity) <= 0n) throw Error('INVALID_ORDER_REQUEST');
   }
-  async function request(method: 'GET'|'POST', endpoint: string, params: {[key:string]:string}, allowMissing = false): Promise<any> {
+  async function request(method: 'GET'|'POST', endpoint: string, params: {[key:string]:string}, allowMissing = false, signedRequest = true): Promise<any> {
     const timestamp = now();
     if (timestamp < blockedUntil) throw Error('EXCHANGE_COOLDOWN');
     if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw Error('INVALID_CLOCK');
-    const query = new URLSearchParams({...params, timestamp:String(timestamp), recvWindow:'5000'}).toString();
-    const signed = query + '&signature=' + createHmac('sha256', secretKey).update(query).digest('hex');
+    const query = new URLSearchParams({...params, ...(signedRequest?{timestamp:String(timestamp),recvWindow:'5000'}:{})}).toString();
+    const signed = signedRequest ? query + '&signature=' + createHmac('sha256', secretKey).update(query).digest('hex') : query;
     let response: Response;
     try {
       response = await fetcher(HOST + endpoint + (method === 'GET' ? '?' + signed : ''), {
         method, redirect:'error', signal:AbortSignal.timeout(12000),
-        headers:{'X-MBX-APIKEY':apiKey, ...(method === 'POST' ? {'Content-Type':'application/x-www-form-urlencoded'} : {})},
+        headers:{...(signedRequest?{'X-MBX-APIKEY':apiKey}:{}), ...(method === 'POST' ? {'Content-Type':'application/x-www-form-urlencoded'} : {})},
         ...(method === 'POST' ? {body:signed} : {}),
       });
     } catch { throw Error('EXCHANGE_TRANSPORT_UNKNOWN'); }
@@ -65,6 +67,17 @@ export function createBinanceTestnetAdapter(options: {
     return body;
   }
   return {
+    async tradeContext(symbol) {
+      if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
+      const startedAt=now();
+      const info=object(await request('GET','/api/v3/exchangeInfo',{symbol},false,false));
+      if(!Array.isArray(info.symbols)||info.symbols.length!==1||info.symbols[0]?.symbol!==symbol)throw Error('INVALID_EXCHANGE_INFO');
+      const r=object(info.symbols[0]),quoteAt=now();
+      const q=object(await request('GET','/api/v3/ticker/bookTicker',{symbol},false,false));
+      if(q.symbol!==symbol)throw Error('BOOK_SYMBOL_MISMATCH');
+      const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
+      validateTradeContext(context,symbol,now());return context;
+    },
     async accountSnapshot() {
       const startedAt = now();
       async function readAccount() {
@@ -90,7 +103,8 @@ export function createBinanceTestnetAdapter(options: {
     },
     async submit(intent, clientId) {
       validateIntent(intent, clientId);
-      const raw = await request('POST', '/api/v3/order', {symbol:intent.symbol, side:intent.side, type:'MARKET', quantity:intent.quantity, newClientOrderId:clientId, newOrderRespType:'FULL'});
+      if(!intent.limitPrice||units(intent.limitPrice)<=0n)throw Error('BOUNDED_LIMIT_REQUIRED');
+      const raw = await request('POST', '/api/v3/order', {symbol:intent.symbol, side:intent.side, type:'LIMIT',timeInForce:'IOC',price:intent.limitPrice, quantity:intent.quantity, newClientOrderId:clientId, newOrderRespType:'FULL'});
       // An ACK or FULL response without complete validated totals stays UNKNOWN in the journal.
       return normalize(raw, intent, clientId);
     },

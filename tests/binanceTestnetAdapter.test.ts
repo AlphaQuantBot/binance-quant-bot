@@ -8,8 +8,8 @@ import { createBinanceTestnetAdapter, testnetAccountId } from '../src/server/bin
 import { OrderExecution, type Intent, type Confirmation } from '../src/server/orderExecution';
 import { settleTrades, type ExecutionTrade } from '../src/server/tradeSettlement';
 const apiKey='testnetFixtureKey', secretKey='testnetFixtureSecret', cid='aq_'+'a'.repeat(32);
-const intent:Intent={requestId:'request_0001',accountId:testnetAccountId(apiKey),symbol:'BTCUSDT',side:'BUY',quantity:'2'};
-const order=(patch:object={})=>({clientOrderId:cid,symbol:'BTCUSDT',side:'BUY',origQty:'2',orderId:123,status:'FILLED',executedQty:'2',cummulativeQuoteQty:'200',updateTime:10,...patch});
+const intent:Intent={requestId:'request_0001',accountId:testnetAccountId(apiKey),symbol:'BTCUSDT',side:'BUY',quantity:'2',limitPrice:'100'};
+const order=(patch:object={})=>({clientOrderId:cid,symbol:'BTCUSDT',side:'BUY',type:'LIMIT',timeInForce:'IOC',price:'100',origQty:'2',orderId:123,status:'FILLED',executedQty:'2',cummulativeQuoteQty:'200',updateTime:10,...patch});
 const trade=(patch:object={})=>({id:1,orderId:123,symbol:'BTCUSDT',isBuyer:true,qty:'2',quoteQty:'200',commission:'0.000012345678901234',commissionAsset:'BNB',...patch});
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 function adapter(fetcher:typeof fetch){return createBinanceTestnetAdapter({apiKey,secretKey,fetcher,now:()=>1234567890});}
@@ -18,7 +18,7 @@ const execution=(patch:Partial<ExecutionTrade>={}):ExecutionTrade=>({tradeId:'1'
 test('signed testnet submission uses exactly one POST, fixed host, safe headers and redirect rejection',async()=>{
  let calls=0;const a=adapter(async(url,init)=>{
   calls++;const u=new URL(String(url));assert.equal(u.origin,'https://testnet.binance.vision');assert.equal(u.pathname,'/api/v3/order');assert.equal(u.search,'');assert.equal(init?.method,'POST');assert.equal(init?.redirect,'error');assert.equal((init?.headers as any)['X-MBX-APIKEY'],apiKey);
-  const p=new URLSearchParams(String(init?.body)), signature=p.get('signature');p.delete('signature');assert.equal(signature,createHmac('sha256',secretKey).update(p.toString()).digest('hex'));assert.equal(p.get('newClientOrderId'),cid);assert.equal(p.get('newOrderRespType'),'FULL');assert.equal(p.get('quantity'),'2');assert.equal(p.get('timestamp'),'1234567890');return json(order());
+  const p=new URLSearchParams(String(init?.body)), signature=p.get('signature');p.delete('signature');assert.equal(signature,createHmac('sha256',secretKey).update(p.toString()).digest('hex'));assert.equal(p.get('newClientOrderId'),cid);assert.equal(p.get('newOrderRespType'),'FULL');assert.equal(p.get('quantity'),'2');assert.equal(p.get('type'),'LIMIT');assert.equal(p.get('timeInForce'),'IOC');assert.equal(p.get('price'),'100');assert.equal(p.get('timestamp'),'1234567890');return json(order());
  });assert.equal((await a.submit(intent,cid)).status,'FILLED');assert.equal(calls,1);
 });
 test('timeout, malformed body, 429 and 5xx never trigger another submission',async()=>{
@@ -92,4 +92,22 @@ test('malformed/negative/duplicate balances and invalid open-order statuses fail
 test('slow collection and account read error do not produce apparently fresh snapshot',async()=>{
  let now=1234567890;const a=createBinanceTestnetAdapter({apiKey,secretKey,now:()=>now,fetcher:async(url)=>{now+=3000;return new URL(String(url)).pathname==='/api/v3/account'?json(accountResponse()):json([]);}});await assert.rejects(a.accountSnapshot(),/STALE/);
  const b=adapter(async()=>json({code:-2015},401));await assert.rejects(b.accountSnapshot(),/UNCONFIRMED/);
+});
+test('unbounded MARKET intents are rejected before HTTP while legacy orders remain queryable',async()=>{
+ let calls=0;const a=adapter(async()=>{calls++;return json(order({status:'NEW',executedQty:'0',cummulativeQuoteQty:'0'}));});await assert.rejects(a.submit({...intent,limitPrice:undefined},cid),/BOUNDED_LIMIT/);assert.equal(calls,0);assert.equal((await a.query({...intent,limitPrice:undefined},cid))?.status,'NEW');assert.equal(calls,1);
+});
+test('IOC partial expiry keeps execution and commissions, while wrong order type/price is rejected',async()=>{
+ const a=adapter(async(url)=>new URL(String(url)).pathname==='/api/v3/order'?json(order({status:'EXPIRED',executedQty:'0.5',cummulativeQuoteQty:'50'})):json([trade({qty:'0.5',quoteQty:'50'})]));const r=await a.query(intent,cid);assert.equal(r?.status,'EXPIRED');assert.equal(r?.executedQty,'0.5');assert.ok(r?.settlement?.fees.length);
+ for(const patch of [{price:'101'},{type:'MARKET'},{timeInForce:'GTC'}])await assert.rejects(adapter(async()=>json(order(patch))).submit(intent,cid),/LIMIT_MISMATCH/);
+});
+test('fresh symbol/book context uses only public unsigned requests on the fixed testnet host',async()=>{
+ const calls:string[]=[];const a=adapter(async(url,init)=>{const u=new URL(String(url));calls.push(u.pathname);assert.equal(u.origin,'https://testnet.binance.vision');assert.equal(u.searchParams.get('symbol'),'BTCUSDT');assert.equal(u.searchParams.has('signature'),false);assert.equal((init?.headers as any)['X-MBX-APIKEY'],undefined);
+  return u.pathname==='/api/v3/exchangeInfo'?json({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[]}],exchangeFilters:[]}):json({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100.01',bidQty:'1',askQty:'2'});
+ });const context=await a.tradeContext('BTCUSDT');assert.deepEqual(calls,['/api/v3/exchangeInfo','/api/v3/ticker/bookTicker']);assert.equal(context.quote.ask,'100.01');
+});
+test('public market context rejects bad symbol, old response, mismatched book and missing metadata',async()=>{
+ let calls=0;const a=adapter(async()=>{calls++;return json({symbols:[]});});await assert.rejects(a.tradeContext('BTCUSDT'),/EXCHANGE_INFO/);await assert.rejects(a.tradeContext('BTCUSDT&x=1'),/SYMBOL/);assert.equal(calls,1);
+ const info={symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[]}],exchangeFilters:[]};
+ const b=adapter(async(url)=>new URL(String(url)).pathname==='/api/v3/exchangeInfo'?json(info):json({symbol:'ETHUSDT'}));await assert.rejects(b.tradeContext('BTCUSDT'),/BOOK_SYMBOL/);
+ let now=1000;const c=createBinanceTestnetAdapter({apiKey,secretKey,now:()=>now,fetcher:async(url)=>{now+=3000;return new URL(String(url)).pathname==='/api/v3/exchangeInfo'?json(info):json({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'1',askQty:'1'});}});await assert.rejects(c.tradeContext('BTCUSDT'),/STALE/);
 });
