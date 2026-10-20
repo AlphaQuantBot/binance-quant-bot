@@ -39,3 +39,44 @@ No exchange order operation is exposed by this command.
 
 Official Testnet limitations:
 https://developers.binance.com/en/docs/products/spot/testnet/general-info
+
+## Match known trade activity to native balance changes
+
+`npm run testnet:activity` requires an existing testnet order journal in addition
+to the independent testnet credentials. It takes the same equity-history lock,
+queries retained orders read-only, obtains explicit symbol/base/quote identities,
+collects account valuation and queries retained orders again. Changing execution
+snapshots abort the observation. Submission is unavailable to this command and
+no cancel capability is passed to its order journal. Read reconciliation updates
+the existing private order journal, not exchange orders.
+
+Validated cumulative trade IDs and native fee records are retained alongside the
+balance observation. For trades added since the last activity baseline, BUY adds
+base/subtracts quote, SELL subtracts base/adds quote, and commission subtracts its
+own native asset. Free/locked movements with unchanged totals are not cash flows.
+Trade IDs are scoped by symbol; old trades are not applied twice. Changed/removed
+historical trades, invalid settlement/pair identity or duplicate trades fail closed.
+Unknown orders/missing settlements produce UNRESOLVED_ORDERS. Other native balance
+differences produce UNEXPLAINED_BALANCE_CHANGE, not guessed deposits or resets.
+
+The first activity snapshot is ACTIVITY_BASELINE_ONLY. Running the simpler
+`testnet:equity-record` without activity clears the activity cursor so a later
+activity run must establish a new baseline; it cannot compare trades across that
+gap. Existing version-one observations without a cursor remain valid equity
+history and likewise require an activity baseline. Restart retains trade cursors.
+Unresolved/unexplained states are latched in that UTC day's activityIssues even if
+a later interval matches. Such issues produce nonzero CLI exit. New days keep a
+new daily issue list without pretending old gaps were retrospectively explained.
+
+MATCHED_KNOWN_ACTIVITY means only that observed net native changes match trades
+in the retained local order journal for this interval. It does NOT discover all
+manual/other-bot orders or prove absence of offsetting unobserved transfers/trades.
+REST bracketing is not atomic. Late fill/fee visibility may cause a safe residual
+failure. A testnet reset cannot be identified conclusively from a balance drop.
+Full-account event/backfill coverage and reset detection remain outstanding;
+dailyRiskAuthorized is still false and no DailyRiskEvidence is manufactured.
+
+Fixture tests cover BUY/SELL movements, base/quote/third-asset commissions,
+free/locked changes, unexplained gains/losses, duplicate/removed trades, unknown
+orders, persisted cursors and retained diagnostic gaps. Actual testnet validation
+has not been performed in this development session.

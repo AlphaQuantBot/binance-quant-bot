@@ -1,0 +1,19 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {activityFromOrders,reconcileActivity,type ActivitySnapshot,type ActivityTrade} from '../src/server/accountActivity';
+import {settleTrades} from '../src/server/tradeSettlement';
+import type {Record as OrderRecord} from '../src/server/orderExecution';
+const balances=(asset:string,free:string,locked='0')=>({asset,free,locked});
+const trade=(patch:Partial<ActivityTrade>={}):ActivityTrade=>({tradeId:'1',orderId:'12',symbol:'BTCUSDT',side:'BUY',quantity:'1',quoteQuantity:'100',commission:'0.001',commissionAsset:'BTC',baseAsset:'BTC',quoteAsset:'USDT',...patch});
+const empty:ActivitySnapshot={trades:[],unresolved:[]};
+test('BUY principal, quote spend and base commission explain exact native changes',()=>{const r=reconcileActivity([balances('USDT','1000')],[balances('USDT','900'),balances('BTC','0.999')],empty,{trades:[trade()],unresolved:[]});assert.equal(r.state,'MATCHED_KNOWN_ACTIVITY');assert.equal(r.newTradeCount,1);assert.equal(r.dailyRiskAuthorized,false);assert.equal(r.externalFlowClassification,'UNVERIFIED');});
+test('SELL quote proceeds and third-asset fee are accounted separately',()=>{const r=reconcileActivity([balances('BTC','1'),balances('BNB','1')],[balances('BTC','0'),balances('USDT','100'),balances('BNB','0.99')],empty,{trades:[trade({side:'SELL',commissionAsset:'BNB',commission:'0.01'})],unresolved:[]});assert.equal(r.state,'MATCHED_KNOWN_ACTIVITY');assert.deepEqual(r.unexplained,[]);});
+test('locked/free movements alone have no asset delta',()=>{const r=reconcileActivity([balances('BTC','1')],[balances('BTC','0','1')],empty,empty);assert.equal(r.state,'MATCHED_KNOWN_ACTIVITY');});
+test('unexplained gains or resets are residuals, never classified as transfers',()=>{for(const amount of ['0','120']){const r=reconcileActivity([balances('USDT','100')],[balances('USDT',amount)],empty,empty);assert.equal(r.state,'UNEXPLAINED_BALANCE_CHANGE');assert.equal(r.unexplained.length,1);assert.equal(r.externalFlowClassification,'UNVERIFIED');}});
+test('old trade is not reapplied, and changed or removed history is rejected',()=>{const old={trades:[trade()],unresolved:[]};assert.equal(reconcileActivity([balances('BTC','0.999')],[balances('BTC','0.999')],old,old).newTradeCount,0);assert.throws(()=>reconcileActivity([],[],old,empty),/HISTORY_REMOVED_OR_CHANGED/);assert.throws(()=>reconcileActivity([],[],old,{trades:[trade({commission:'0.002'})],unresolved:[]}),/HISTORY_REMOVED_OR_CHANGED/);});
+test('unresolved order evidence cannot yield matched activity',()=>{const r=reconcileActivity([],[],empty,{trades:[],unresolved:['unknown_order']});assert.equal(r.state,'UNRESOLVED_ORDERS');});
+test('duplicate trade and invalid pair metadata fail closed',()=>{assert.throws(()=>reconcileActivity([],[],empty,{trades:[trade(),trade()],unresolved:[]}),/DUPLICATE_ACTIVITY_TRADE/);assert.throws(()=>reconcileActivity([],[],empty,{trades:[trade({baseAsset:'ETH'})],unresolved:[]}),/INVALID_ACTIVITY_TRADE/);});
+test('snapshot builder requires reconciled settlement and exact account/pair identity',()=>{
+ const t=trade(),row:OrderRecord={requestId:'order_0001',accountId:'account1',symbol:'BTCUSDT',side:'BUY',quantity:'1',clientOrderId:'client1',status:'FILLED',confirmation:{clientOrderId:'client1',symbol:'BTCUSDT',side:'BUY',orderId:'12',status:'FILLED',executedQty:'1',quoteQty:'100',updateTime:1000}};row.confirmation!.settlement=settleTrades(row.confirmation!,[t]);
+ const pairs=[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT'}];assert.equal(activityFromOrders([row],pairs,'account1').trades.length,1);assert.throws(()=>activityFromOrders([row],pairs,'other'));assert.throws(()=>activityFromOrders([row],[],'account1'));delete row.confirmation!.settlement;assert.deepEqual(activityFromOrders([row],pairs,'account1').unresolved,['order_0001']);
+});
