@@ -163,3 +163,15 @@ other malformed types remain rejected. All rate, freshness and identity checks
 remain, and reservationAuthorized/tradingEnabled remain false. Authenticated read
 readiness refers only to validated reads, not complete discount or trade readiness.
 Actual operator rerun is still required to confirm remaining numeric components.
+
+
+### Actual preflight success; account audit diagnosis pending
+
+Operator run on b4c8013 confirmed all five preflight checks PASS,
+publicReady=true, authenticatedReady=true, tradingEnabled=false. Commission
+warning correctly states no discount applied. This confirms read connectivity,
+not order execution. The next testnet:account run failed with the old generic
+message. Account audit now prints only allowlisted validation/storage codes and
+phase, without paths, keys or balances in failure diagnostics. Root cause remains
+unconfirmed; do not delete journal/lock files or bypass durability checks based
+on the generic failure. Pull and repeat testnet:account in the same process env.
