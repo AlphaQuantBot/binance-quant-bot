@@ -53,10 +53,4 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
  }catch(error){throw annotateReferenceFailure(error,undefined,phase);}
  finally{abortSignal?.removeEventListener('abort',shutdown);if(!referenceSession)stream?.close();journal?.close();}
 }
-export function decisionObservationErrorCode(error:unknown){
- const allowed=['SCOPED_NOT_INITIALIZED','SCOPED_RECONCILIATION_REQUIRED','SCOPED_STATE_INVALID','INVALID_TESTNET_CREDENTIALS',
- 'SIGNAL_RATE_LIMITED','SIGNAL_LOCATION_RESTRICTED','SIGNAL_READ_FAILED','SIGNAL_READ_STALE','SIGNAL_CLOCK_INVALID',
- 'SIGNAL_CANDLES_INVALID','SIGNAL_CANDLE_TIMING_INVALID','SIGNAL_CANDLES_STALE','ACCOUNT_CHANGED_DURING_READ','ACCOUNT_SNAPSHOT_STALE',
- 'REFERENCE_CLOCK_UNCONFIRMED','EXCHANGE_LOCATION_RESTRICTED','EXCHANGE_COOLDOWN','STREAM_REFERENCE_TIMEOUT','STREAM_REFERENCE_DISCONNECTED','STALE_REFERENCE_PRICE'];
- return error instanceof Error&&allowed.includes(error.message)?error.message:'DECISION_OBSERVATION_UNCONFIRMED';
-}
+export {decisionObservationErrorCode} from './decisionObservationErrors';
