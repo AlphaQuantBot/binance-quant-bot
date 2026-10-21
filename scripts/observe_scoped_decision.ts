@@ -6,6 +6,7 @@ import {createBinanceTestnetAdapter,testnetAccountId} from '../src/server/binanc
 import {TestnetReferenceStream} from '../src/server/testnetReferenceStream';
 import {readSignalCandles,evaluateSignal} from '../src/server/testnetSignalObserver';
 import {decideScopedSignal} from '../src/server/scopedSignalDecision';
+import {reviewScopedSignalCandidate} from '../src/server/scopedSignalOrderReview';
 async function main(){
  const file=path.resolve(process.env.APP_TESTNET_SCOPED_JOURNAL??'.testnet_scoped/sandbox.sqlite');
  if(!fs.existsSync(file))throw Error('SCOPED_NOT_INITIALIZED');
@@ -27,8 +28,20 @@ async function main(){
   const audit=journal.audit(account,context);
   const decision=decideScopedSignal(observation,audit,{accountId:account.accountId,expectedAccountId:accountId,auditObservedAt:account.observedAt,
    buyOnceUsed:!!journal.find('sandbox_first_buy_v1'),sellOnceUsed:!!journal.find('sandbox_first_sell_v1')},Date.now());
-  console.log(JSON.stringify({...decision,recovery},null,2));
-  if(decision.assessment==='BLOCKED')process.exitCode=1;
+  let reviewed:ReturnType<typeof reviewScopedSignalCandidate>|undefined;
+  if(decision.assessment==='CANDIDATE_ONLY'){
+   // Refresh quote/reference and read actual commissions concurrently; HOLD never forces an order review.
+   const reviewReader={tradeContext:exchange.tradeContext,commissionRates:exchange.commissionRates};
+   const [currentContext,commission]=await Promise.all([reviewReader.tradeContext('BTCUSDT'),reviewReader.commissionRates('BTCUSDT')]);
+   const currentAudit=journal.audit(account,currentContext);
+   reviewed=reviewScopedSignalCandidate(observation,currentAudit,{accountId:account.accountId,expectedAccountId:accountId,
+    auditObservedAt:account.observedAt,buyOnceUsed:!!journal.find('sandbox_first_buy_v1'),sellOnceUsed:!!journal.find('sandbox_first_sell_v1')},
+    account,currentContext,commission,Date.now());
+  }
+  const report=reviewed??{...decision,orderReview:{state:'NOT_APPLICABLE',code:'NO_CURRENT_CANDIDATE',
+   exchangeValidated:false,capitalReserved:false,feeReservationAuthorized:false,executionAuthorized:false}};
+  console.log(JSON.stringify({...report,recovery},null,2));
+  if(report.assessment==='BLOCKED')process.exitCode=1;
  }finally{stream?.close();journal?.close();}
 }
 main().catch(error=>{
