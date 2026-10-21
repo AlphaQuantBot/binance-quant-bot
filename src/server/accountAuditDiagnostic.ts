@@ -1,0 +1,11 @@
+/** Only fixed diagnostic codes leave the process; never raw filesystem paths or responses. */
+export function accountAuditDiagnostic(error:unknown,stage:'INITIALIZE'|'REFRESH'|'CLOSE'){
+ const safeMessages=['INVALID_TESTNET_CREDENTIALS','INVALID_JOURNAL','INVALID_JOURNAL_STATUS','INVALID_CANCEL_JOURNAL','INVALID_CAPITAL_JOURNAL','INVALID_CAPITAL_ACCOUNT','INVALID_DAILY_RISK_JOURNAL','INVALID_DECIMAL','INVALID_BALANCES','INVALID_BALANCE_ASSET','INVALID_OPEN_ORDERS','INVALID_OPEN_ORDER','INVALID_OPEN_ORDER_TOTALS','DUPLICATE_OPEN_ORDER','UNSAFE_EXCHANGE_ID','ACCOUNT_CHANGED_DURING_READ','ACCOUNT_SNAPSHOT_STALE','ACCOUNT_SNAPSHOT_MISMATCH','ACCOUNT_CAN_TRADE_INVALID','ACCOUNT_TYPE_UNSUPPORTED','ACCOUNT_PERMISSIONS_MISSING','ACCOUNT_SPOT_PERMISSION_MISSING','EXCHANGE_LOCATION_RESTRICTED','EXCHANGE_COOLDOWN','EXCHANGE_REQUEST_UNCONFIRMED','EXCHANGE_TRANSPORT_UNKNOWN','EXCHANGE_RESPONSE_UNKNOWN','INVALID_EXCHANGE_RESPONSE','ORDER_NOT_FOUND_ON_EXCHANGE','INVALID_CONFIRMATION','INVALID_TOTALS','JOURNAL_CLOSED','CAPITAL_JOURNAL_CLOSED','DAILY_RISK_JOURNAL_CLOSED'];
+ const filesystemCodes=['EEXIST','EACCES','EPERM','ENOENT','EISDIR','ENOTDIR','EBADF','EINVAL','ENOSPC','EROFS','EIO'];
+ const message=error instanceof Error?error.message:'';
+ const fsCode=error instanceof Error?(error as NodeJS.ErrnoException).code:undefined;
+ const code=safeMessages.includes(message)?message:fsCode&&filesystemCodes.includes(fsCode)?'LOCAL_STORAGE_'+fsCode:'ACCOUNT_AUDIT_UNCONFIRMED';
+ const syscall=error instanceof Error?(error as NodeJS.ErrnoException).syscall:undefined;
+ const storageOperation=fsCode&&filesystemCodes.includes(fsCode)&&syscall&&['open','rename','fsync','write','unlink','read'].includes(syscall)?syscall:undefined;
+ return {...(storageOperation?{storageOperation}:{}),environment:'BINANCE_TESTNET',operation:'READ_ONLY_ACCOUNT_AUDIT',stage,state:'FAIL',code,tradingEnabled:false};
+}

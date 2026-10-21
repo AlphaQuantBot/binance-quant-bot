@@ -1,0 +1,35 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {testnetPreflight} from '../src/server/testnetPreflight';
+import {createBinanceTestnetAdapter} from '../src/server/binanceTestnetAdapter';
+test('actual 451 response is a blocker, stops subsequent requests and does not leak credentials',async()=>{let calls=0;const r=await testnetPreflight({apiKey:'secretFixtureKey',secretKey:'secretFixtureSecret',fetcher:async(url,init)=>{calls++;assert.equal(String(url),'https://testnet.binance.vision/api/v3/ping');assert.equal(init?.method,'GET');assert.equal(init?.headers,undefined);return new Response('restricted',{status:451});}});assert.equal(calls,1);assert.equal(r.checks[0].state,'BLOCKED');assert.equal(r.checks[0].code,'EXCHANGE_LOCATION_RESTRICTED');assert.equal(r.authenticatedReady,false);assert.equal(JSON.stringify(r).includes('secretFixture'),false);});
+test('public success does not invent authenticated success without testnet keys',async()=>{const r=await testnetPreflight({now:()=>1000,fetcher:async url=>new Response(JSON.stringify(String(url).includes('/time')?{serverTime:1000}:String(url).includes('exchangeInfo')?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:{}))});assert.equal(r.publicReady,true);assert.equal(r.authenticatedReady,false);assert.ok(r.checks.some(c=>c.code==='TESTNET_CREDENTIALS_MISSING'));assert.equal(r.tradingEnabled,false);});
+test('transport errors and malformed public data fail without a retry or forged result',async()=>{for(const fail of [true,false]){let calls=0;const r=await testnetPreflight({fetcher:async()=>{calls++;if(fail)throw Error('private detail');return new Response('badjson');}});assert.equal(calls,1);assert.equal(r.publicReady,false);assert.equal(JSON.stringify(r).includes('private detail'),false);}});
+test('adapter names location restriction distinctly and never retries',async()=>{let calls=0;const a=createBinanceTestnetAdapter({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',fetcher:async()=>{calls++;return new Response('{}',{status:451});}});await assert.rejects(a.accountSnapshot(),/EXCHANGE_LOCATION_RESTRICTED/);assert.equal(calls,1);});
+test('authenticated account schema failures expose only allowlisted diagnostic codes, never private response data',async()=>{
+ const cases=[{patch:{permissions:undefined},code:'ACCOUNT_PERMISSIONS_MISSING'},{patch:{permissions:['MARGIN']},code:'ACCOUNT_SPOT_PERMISSION_MISSING'},{patch:{accountType:'MARGIN'},code:'ACCOUNT_TYPE_UNSUPPORTED'},{patch:{canTrade:undefined},code:'ACCOUNT_CAN_TRADE_INVALID'},{patch:{balances:[{asset:'USDT',free:100,locked:'0'}]},code:'INVALID_DECIMAL'}];
+ for(const {patch,code} of cases){const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{const p=new URL(String(url)).pathname;return new Response(JSON.stringify(p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'USDT',free:'100',locked:'0'}],privateField:'DO_NOT_LOG',...patch}:{}));}});assert.equal(r.checks.find(c=>c.name==='account')?.code,code);assert.equal(r.authenticatedReady,false);assert.equal(JSON.stringify(r).includes('DO_NOT_LOG'),false);assert.equal(JSON.stringify(r).includes('fixtureSecret123'),false);}
+});
+test('account consistency failure remains fail-closed with an actionable safe code',async()=>{let accounts=0;const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{const p=new URL(String(url)).pathname;return new Response(JSON.stringify(p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'USDT',free:String(100+accounts++),locked:'0'}]}:p==='/api/v3/openOrders'?[]:{}));}});assert.equal(r.checks.find(c=>c.name==='account')?.code,'ACCOUNT_CHANGED_DURING_READ');assert.equal(r.authenticatedReady,false);});
+
+
+test('Unicode balances and enabled null discount asset pass reads with warning without authorizing trading',async()=>{
+ const zeroRates={maker:'0',taker:'0',buyer:'0',seller:'0'};
+ const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{
+  const p=new URL(String(url)).pathname;
+  const body=p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'这是测试币',free:'100',locked:'2'},{asset:'456',free:'1',locked:'0'},{asset:'USDT',free:'1000',locked:'0'}]}:p==='/api/v3/openOrders'?[]:p==='/api/v3/account/commission'?{symbol:'BTCUSDT',standardCommission:zeroRates,specialCommission:zeroRates,taxCommission:zeroRates,discount:{enabledForAccount:true,enabledForSymbol:true,discountAsset:null,discount:'0.25'}}:{};
+  return new Response(JSON.stringify(body));
+ }});
+ assert.equal(r.authenticatedReady,true);assert.equal(r.tradingEnabled,false);
+ assert.deepEqual(r.checks.find(c=>c.name==='commission')?.warnings,['DISCOUNT_ASSET_UNAVAILABLE_NO_DISCOUNT_APPLIED']);
+ assert.equal(JSON.stringify(r).includes('这是测试币'),false);
+});
+
+
+test('commission discount diagnostics identify rejected fields without leaking raw values',async()=>{
+ const cases=[{discount:null,code:'COMMISSION_DISCOUNT_MISSING'},{discount:{enabledForAccount:'private'},code:'COMMISSION_DISCOUNT_FLAGS_INVALID'},{discount:{enabledForAccount:true,enabledForSymbol:true,discountAsset:123},code:'COMMISSION_DISCOUNT_ASSET_TYPE_INVALID'},{discount:{enabledForAccount:true,enabledForSymbol:true,discountAsset:''},code:'COMMISSION_DISCOUNT_ASSET_EMPTY'},{discount:{enabledForAccount:false,enabledForSymbol:false,discountAsset:'PRIVATE-RAW'},code:'COMMISSION_DISCOUNT_ASSET_UNSUPPORTED'},{discount:{enabledForAccount:false,enabledForSymbol:false,discountAsset:'BNB',discount:'1.1'},code:'COMMISSION_DISCOUNT_RATE_UNSUPPORTED'}];
+ for(const {discount,code} of cases){const r=await testnetPreflight({apiKey:'fixtureKey123',secretKey:'fixtureSecret123',now:()=>1000,fetcher:async url=>{
+ const p=new URL(String(url)).pathname;
+ return new Response(JSON.stringify(p==='/api/v3/time'?{serverTime:1000}:p==='/api/v3/exchangeInfo'?{symbols:[{symbol:'BTCUSDT',status:'TRADING',isSpotTradingAllowed:true}]}:p==='/api/v3/account'?{accountType:'SPOT',canTrade:true,permissions:['SPOT'],balances:[{asset:'USDT',free:'100',locked:'0'}]}:p==='/api/v3/openOrders'?[]:p==='/api/v3/account/commission'?{symbol:'BTCUSDT',discount}:{}));
+ }});assert.equal(r.checks.find(c=>c.name==='account')?.state,'PASS');assert.equal(r.checks.find(c=>c.name==='commission')?.code,code);assert.equal(r.authenticatedReady,false);assert.equal(r.tradingEnabled,false);assert.equal(JSON.stringify(r).includes('PRIVATE-RAW'),false);assert.equal(JSON.stringify(r).includes('fixtureSecret123'),false);}
+});

@@ -80,22 +80,7 @@ export const SecurityAndSettings: React.FC<SecurityAndSettingsProps> = ({
     }
   }, [settings.tradingMode, settings.exchange, settings.liveSpotBalanceUsdt]);
 
-  // Load persisted server credentials if local state is blank
-  React.useEffect(() => {
-    if (!apiKey || !secretKey) {
-      fetch('/api/binance/config')
-        .then(r => r.json())
-        .then(d => {
-          if (d && d.success && d.apiKey) {
-            setApiKey(d.apiKey);
-            if (d.secretKey) setSecretKey(d.secretKey);
-            if (d.exchange) setExchange(d.exchange);
-          }
-        })
-        .catch(() => {});
-    }
-  }, []);
-
+  // Persisted keys are deliberately not downloadable. Re-enter to replace them.
   const [apiTestResult, setApiTestResult] = useState<{
     success: boolean;
     message: string;
@@ -1345,3 +1330,4 @@ export const SecurityAndSettings: React.FC<SecurityAndSettingsProps> = ({
     </div>
   );
 };
+

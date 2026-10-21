@@ -59,10 +59,10 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
     gateway: string;
     activePairsCount: number;
   }>({
-    status: 'ONLINE',
-    latencyMs: 24,
+    status: 'OFFLINE',
+    latencyMs: 0,
     gateway: 'api-gcp.binance.com',
-    activePairsCount: 757
+    activePairsCount: 0
   });
 
   useEffect(() => {
@@ -74,14 +74,14 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           const data = await res.json();
           if (data && data.success && isMounted) {
             setBinanceHealth({
-              status: 'ONLINE',
-              latencyMs: data.latencyMs || 24,
+              status: data.status === 'ONLINE' ? 'ONLINE' : 'OFFLINE',
+              latencyMs: 0,
               gateway: data.gateway || 'api-gcp.binance.com',
-              activePairsCount: data.activePairsCount || 757
+              activePairsCount: data.activePairsCount || 0
             });
           }
         }
-      } catch {}
+      } catch { if (isMounted) setBinanceHealth(prev => ({ ...prev, status: 'OFFLINE', activePairsCount: 0 })); }
     };
     checkPing();
     const interval = setInterval(checkPing, 15000);
@@ -106,7 +106,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             </div>
             <div>
               <span className="text-base font-bold tracking-tight text-white flex items-center gap-1.5 font-sans">
-                NEXUS BOT
+                ALFAQUANT
                 <span className="text-[10px] uppercase font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-mono flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   BINANCE SPOT API v3
@@ -118,7 +118,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <div 
             onClick={() => onOpenQuickConnect ? onOpenQuickConnect() : setActiveTab('security')}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0b1120] border border-emerald-500/40 text-[11px] font-mono text-slate-300 hover:border-emerald-400 cursor-pointer transition-colors shadow-sm shadow-emerald-500/10"
-            title="Binance REST v3 & WebSocket Entegrasyonu Aktif. API detayları ve hızlı bağlantı için tıklayın."
+            title="Piyasa verisinin güncelliği terminal uyarısında gösterilir.."
           >
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -130,11 +130,11 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             </span>
             {settings.binanceApiKey && settings.binanceSecretKey ? (
               <span className="text-emerald-400 text-[10px] bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.5 rounded font-bold">
-                CANLI BAĞLI ({binanceHealth.latencyMs}ms)
+                {binanceHealth.status === 'ONLINE' ? 'PİYASA VERİSİ GÜNCEL' : 'PİYASA VERİSİ YOK'}
               </span>
             ) : (
               <span className="text-emerald-400 text-[10px] bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold flex items-center gap-1">
-                CANLI MOTOR ({binanceHealth.latencyMs}ms)
+                {binanceHealth.status === 'ONLINE' ? 'PİYASA VERİSİ GÜNCEL' : 'PİYASA VERİSİ YOK'}
               </span>
             )}
           </div>
@@ -179,10 +179,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             }`}
           >
             <Terminal className="w-4 h-4 text-emerald-400 animate-pulse" />
-            <span>Hacker Alpha Radarı</span>
-            <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 text-[10px] font-mono rounded font-bold">
-              CANLI
-            </span>
+            <span>AI Araştırma Radarı</span>
+            <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 text-[10px] font-mono rounded font-bold">MODEL</span>
           </button>
 
           <button
@@ -240,21 +238,21 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <button
             onClick={() => setActiveTab('alpha-radar')}
             className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-bold rounded-md bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 hover:border-emerald-400 transition-colors shadow-sm"
-            title="Otonom İnisiyatif Modu: Hacker Alpha Radarı sayfasına gitmek için tıklayın"
+            title="Otonom İnisiyatif Modu: AI Araştırma Radarı sayfasına gitmek için tıklayın"
           >
             <Terminal className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             <span>Otonom İnisiyatif:</span>
-            <span className="text-emerald-400 font-bold underline decoration-dotted">AKTİF</span>
+            <span className="text-emerald-400 font-bold underline decoration-dotted">BEKLEMEDE</span>
           </button>
 
           {/* Autonomous Max-Profit Engine Indicator */}
           <div
             className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded-md bg-[#0a0f1d] border border-emerald-500/30 text-slate-300 shadow-sm shadow-emerald-500/10"
-            title="Otonom Max-Kâr Motoru 7/24 En Karlı Pariteleri Tarayıp Al-Sat Yapıyor (Sıfır Manuel Müdahale)"
+            title="Canlı emir yürütme kapalı; piyasa verisi durumunu terminal uyarısından kontrol edin."
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-slate-400">Otonom Max-Kâr:</span>
-            <span className="text-emerald-400 font-bold">AKTİF</span>
+            <span className="text-emerald-400 font-bold">BEKLEMEDE</span>
             {typeof lastTradeAgoSec === 'number' && (
               <span className="text-slate-400 text-[11px] border-l border-slate-700 pl-1.5 ml-0.5 tabular-nums">
                 {lastTradeAgoSec}s önce
@@ -273,7 +271,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             title="İşlem Modunu Değiştir (Sanal Paper / Canlı Binance API)"
           >
             <span className={`w-1.5 h-1.5 rounded-full ${settings.tradingMode === 'LIVE_API' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-            {settings.tradingMode === 'LIVE_API' ? 'CANLI BINANCE' : 'SİMÜLASYON (TEST)'}
+            {settings.tradingMode === 'LIVE_API' ? 'CANLI EMİR KAPALI' : 'SİMÜLASYON (TEST)'}
           </button>
 
           {/* Primary Balance Counter */}
@@ -489,3 +487,4 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
     </header>
   );
 };
+

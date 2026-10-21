@@ -1,3 +1,6 @@
+import { paperExit, nextPaperWinRate, paperAvailableCapital, paperSymbolPrice } from './utils/paperRisk';
+import { canUseMarketPayload, isFreshMarket, type MarketProvenance } from './utils/marketProvenance';
+import { safeSettings } from './utils/safeSettings';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Ticker, 
@@ -57,14 +60,25 @@ export default function App() {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isLoadingTickers, setIsLoadingTickers] = useState(true);
   const [isLoadingCandles, setIsLoadingCandles] = useState(false);
+  const tickerProvenanceRef = useRef<MarketProvenance | null>(null);
+  const candleProvenanceRef = useRef<MarketProvenance | null>(null);
+  const candleRequestRef = useRef(0);
+  const [marketMessage, setMarketMessage] = useState('Piyasa verisi bekleniyor; otomatik kararlar beklemede.');
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!isFreshMarket(tickerProvenanceRef.current)) {
+        tickerProvenanceRef.current = null; setTickers([]);
+        setMarketMessage('Piyasa verisi yok veya güncelliğini yitirdi; otomatik kararlar beklemede.');
+      }
+      if (!isFreshMarket(candleProvenanceRef.current)) { candleProvenanceRef.current = null; setCandles([]); }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
 
   // User & Bot state
   const [settings, setSettings] = useState<UserSecuritySettings>(() => {
     const s = loadSecuritySettings();
-    // Guarantee 1000 USDT if previously at default 10000 or unconfigured
-    if (s.simulatedBalanceUsdt === 10000) {
-      s.simulatedBalanceUsdt = 1000;
-    }
     // Clean up any stale placeholders so fresh Binance balance takes over
     if (s.liveSpotBalanceUsdt === 58.53 || s.liveSpotBalanceUsdt === 57.73) {
       s.liveSpotBalanceUsdt = 0;
@@ -93,8 +107,8 @@ export default function App() {
     // Preserve open positions with strict Zero-Loss (trailingStopPercent: 0) and Take Profit (+2.8%)
     return sourceList.map(b => ({
       ...b,
-      status: 'RUNNING' as const,
-      trailingStopPercent: 0, // SIFIR KAYIP: Zararına satış kapalı
+      status: 'PAUSED' as const,
+      trailingStopPercent: 0, // Legacy strategy settings; live execution remains paused
       takeProfitPercent: Math.max(2.5, b.takeProfitPercent || 2.8)
     }));
   });
@@ -104,71 +118,8 @@ export default function App() {
     botsRef.current = bots;
   }, [bots]);
 
-  const [orders, setOrders] = useState<TradeOrder[]>(() => {
-    const saved = loadSavedOrders();
-    if (saved.length > 0) {
-      const seen = new Set<string>();
-      const deduped: TradeOrder[] = [];
-      for (const o of saved) {
-        if (o && o.id && !seen.has(o.id)) {
-          seen.add(o.id);
-          deduped.push(o);
-        }
-      }
-      return deduped;
-    }
-    // Scaled demonstration trade history aligned with 1000 USDT budget
-    return [
-      {
-        id: 'ord-101',
-        symbol: 'BTCUSDT',
-        side: 'BUY',
-        type: 'LIMIT',
-        price: 85900,
-        amount: 0.0040,
-        totalUsdt: 350,
-        status: 'PENDING',
-        pnlPercent: 0.78,
-        timestamp: Date.now() - 1800000,
-        executionSource: 'BOT',
-        botName: 'BTC Grid Neutral Bot',
-        stopLossPrice: 84182,
-        takeProfitPrice: 87790
-      },
-      {
-        id: 'ord-102',
-        symbol: 'SOLUSDT',
-        side: 'BUY',
-        type: 'MARKET',
-        price: 214.20,
-        amount: 1.16,
-        totalUsdt: 250,
-        status: 'PENDING',
-        pnlPercent: 1.96,
-        timestamp: Date.now() - 3600000,
-        executionSource: 'BOT',
-        botName: 'SOL Momentum Scalper v4',
-        stopLossPrice: 211.20,
-        takeProfitPrice: 222.33
-      },
-      {
-        id: 'ord-103',
-        symbol: 'SUIUSDT',
-        side: 'BUY',
-        type: 'MARKET',
-        price: 3.42,
-        amount: 43.85,
-        totalUsdt: 150,
-        status: 'PENDING',
-        pnlPercent: 5.84,
-        timestamp: Date.now() - 7200000,
-        executionSource: 'BOT',
-        botName: 'SUI Altcoin Breakout Surge',
-        stopLossPrice: 3.34,
-        takeProfitPrice: 3.64
-      }
-    ];
-  });
+  // Local saved history is not exchange-confirmed; do not invent starting trades.
+  const [orders, setOrders] = useState<TradeOrder[]>(() => loadSavedOrders());
 
   const ordersRef = useRef(orders);
   useEffect(() => {
@@ -177,6 +128,8 @@ export default function App() {
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => loadNotifications());
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const predictionRequestRef = useRef(0);
+  const [modelMessage, setModelMessage] = useState('');
   const [prediction, setPrediction] = useState<AIPredictionResult | null>(null);
   const [isLoadingPrediction, setIsLoadingPrediction] = useState(false);
 
@@ -205,83 +158,42 @@ export default function App() {
     saveSecuritySettings(settings);
   }, [settings]);
 
-  // Two-way server credentials sync with local disk vault
+  // Read metadata only. Saved exchange secrets stay on the server.
   useEffect(() => {
-    fetch('/api/binance/config')
-      .then(r => r.json())
-      .then(data => {
-        if (data && data.success && data.configured && data.apiKey) {
-          setSettings(prev => {
-            const hasNewCreds = prev.binanceApiKey !== data.apiKey || prev.exchange !== (data.exchange || 'BINANCE');
-            const liveBal = typeof data.liveBalance === 'number' && data.liveBalance > 0 ? data.liveBalance : prev.liveSpotBalanceUsdt;
-            const availCash = typeof data.availableCash === 'number' && data.availableCash >= 0 ? data.availableCash : prev.availableCashUsdt;
-            if (hasNewCreds || prev.liveSpotBalanceUsdt !== liveBal || prev.availableCashUsdt !== availCash) {
-              return {
-                ...prev,
-                exchange: (data.exchange as any) || 'BINANCE',
-                binanceApiKey: data.apiKey,
-                binanceSecretKey: data.secretKey || prev.binanceSecretKey,
-                liveSpotBalanceUsdt: liveBal,
-                availableCashUsdt: availCash,
-                liveSpotBalanceTry: undefined
-              };
-            }
-            return prev;
-          });
-        } else if (settings.binanceApiKey && settings.binanceSecretKey) {
-          fetch('/api/binance/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              apiKey: settings.binanceApiKey,
-              secretKey: settings.binanceSecretKey,
-              exchange: settings.exchange || 'BINANCE'
-            })
-          }).catch(() => {});
-        }
-      })
-      .catch(() => {});
+    fetch('/api/binance/config').then(r => r.json()).then(data => {
+      if (data?.success && data.configured) {
+        setSettings(prev => ({ ...prev, exchange: data.exchange || prev.exchange }));
+      }
+    }).catch(() => {});
   }, []);
 
-  // Fetch Binance Tickers
+  // Reject unknown/synthetic/stale responses instead of retaining a misleading live display.
   const fetchTickers = useCallback(async () => {
     try {
-      const res = await fetch('/api/binance/tickers', {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!res.ok) return;
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) return;
-      const data = await res.json();
-      if (data && data.success && Array.isArray(data.data)) {
-        setTickers(data.data);
-      }
+      const response = await fetch('/api/binance/tickers', { headers: { Accept: 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || !canUseMarketPayload(data)) throw new Error('Unavailable');
+      tickerProvenanceRef.current = data.provenance;
+      setTickers(data.data);
+      setMarketMessage('Kaynak: Binance • Son veri: ' + new Date(data.provenance.receivedAt).toLocaleTimeString('tr-TR'));
     } catch {
-      // Silently ignore transient network drops
-    } finally {
-      setIsLoadingTickers(false);
-    }
+      tickerProvenanceRef.current = null; setTickers([]);
+      setMarketMessage('Piyasa verisi alınamadı; otomatik kararlar beklemede.');
+    } finally { setIsLoadingTickers(false); }
   }, []);
 
-  // Fetch Candlesticks
   const fetchCandles = useCallback(async (sym: string, int: string) => {
-    setIsLoadingCandles(true);
+    const requestId = ++candleRequestRef.current;
+    candleProvenanceRef.current = null; setCandles([]); setPrediction(null); predictionRequestRef.current++; setIsLoadingCandles(true);
     try {
-      const res = await fetch(`/api/binance/klines?symbol=${sym}&interval=${int}&limit=65`, {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!res.ok) return;
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) return;
-      const data = await res.json();
-      if (data && data.success && Array.isArray(data.data)) {
-        setCandles(data.data);
-      }
+      const response = await fetch(`/api/binance/klines?symbol=${sym}&interval=${int}&limit=65`);
+      const data = await response.json();
+      if (requestId !== candleRequestRef.current) return;
+      if (!response.ok || !canUseMarketPayload(data) || data.symbol !== sym || data.interval !== int) throw new Error('Unavailable');
+      candleProvenanceRef.current = data.provenance; setCandles(data.data);
     } catch {
-      // Silently ignore transient network drops
-    } finally {
-      setIsLoadingCandles(false);
-    }
+      if (requestId === candleRequestRef.current) { candleProvenanceRef.current = null; setCandles([]); }
+    } finally { if (requestId === candleRequestRef.current) setIsLoadingCandles(false); }
   }, []);
 
   // Initial loads
@@ -407,11 +319,13 @@ export default function App() {
 
   useEffect(() => {
     fetchCandles(selectedSymbol, interval);
+    const timer = window.setInterval(() => fetchCandles(selectedSymbol, interval), 15000);
+    return () => { window.clearInterval(timer); candleRequestRef.current++; };
   }, [selectedSymbol, interval, fetchCandles]);
 
   // Current active ticker info
   const currentTicker = tickers.find(t => t.symbol === selectedSymbol) || null;
-  const currentPrice = currentTicker ? parseFloat(currentTicker.lastPrice) : (candles[candles.length - 1]?.close || 94000);
+  const currentPrice = currentTicker ? parseFloat(currentTicker.lastPrice) : (candles[candles.length - 1]?.close || 0);
 
   // Dictionary of current prices for fast order valuation
   const currentPricesMap = React.useMemo(() => {
@@ -818,7 +732,10 @@ export default function App() {
 
   // Fetch AI Prediction
   const runAIPrediction = async () => {
-    if (!currentTicker && candles.length === 0) return;
+    setPrediction(null);
+    const predictionRequest = ++predictionRequestRef.current;
+    setModelMessage('Model isteği bekleniyor.');
+    if (!currentTicker || !isFreshMarket(tickerProvenanceRef.current) || !isFreshMarket(candleProvenanceRef.current) || candles.length < 15) { setModelMessage('Model için güncel fiyat ve yeterli mum verisi gerekli.'); return; }
     setIsLoadingPrediction(true);
     try {
       const rsiValue = calculateRSI(candles, 14);
@@ -835,19 +752,21 @@ export default function App() {
           timeframe: interval,
           indicators: {
             rsi: rsiValue,
-            macd: 'Bullish Crossover',
-            bbPosition: 'Orta Band Üzerinde',
+            macd: null,
+            bbPosition: null,
             trend: (currentTicker && parseFloat(currentTicker.priceChangePercent) >= 0) ? 'Yukarı Trend' : 'Konsolidasyon',
-            orderBookBias: 62
+            orderBookBias: null
           }
         })
       });
 
-      if (!res.ok) return;
+      if (!res.ok) { setModelMessage('Yapay zekâ servisi yanıt vermedi; hazır sinyal üretilmedi.'); return; }
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) return;
       const data = await res.json();
+      if (predictionRequest !== predictionRequestRef.current) return;
       if (data && data.success && data.result) {
+        setModelMessage('Model çıktısı • Bağımsız olarak doğrulanmış sinyal değildir.');
         setPrediction(data.result);
         soundManager.playRadarBlip();
         addNotification({
@@ -858,7 +777,7 @@ export default function App() {
         });
       }
     } catch {
-      // Gracefully handle AI prediction error
+      if (predictionRequest === predictionRequestRef.current) setModelMessage('Yapay zekâ verisi alınamadı; hazır sinyal üretilmedi.');
     } finally {
       setIsLoadingPrediction(false);
     }
@@ -874,6 +793,10 @@ export default function App() {
     stopLossPercent?: number;
     takeProfitPercent?: number;
   }) => {
+    if (!isFreshMarket(tickerProvenanceRef.current) || !isFreshMarket(candleProvenanceRef.current)) {
+      addNotification({ type: 'SYSTEM', title: 'Güncel veri gerekli', message: 'Emir kaydı oluşturulmadı; piyasa verisini yenileyin.' });
+      return;
+    }
     const isLive = settings.tradingMode === 'LIVE_API';
     const effectiveBalance = isLive && typeof settings.liveSpotBalanceUsdt === 'number' && settings.liveSpotBalanceUsdt > 0
       ? settings.liveSpotBalanceUsdt
@@ -1068,6 +991,8 @@ export default function App() {
     const currentPrices = pricesMapRef.current;
     const currentSet = settingsRef.current;
     const isLive = currentSet.tradingMode === 'LIVE_API';
+    // Phase 1: prevent all live bot paths from mutating local balances, positions or PnL.
+    if (isLive || !isFreshMarket(tickerProvenanceRef.current)) return;
     const now = Date.now();
 
     setEngineTickCount(prev => prev + 1);
@@ -1080,23 +1005,13 @@ export default function App() {
     }
 
     // Ensure all bots run in continuous active autonomous mode (zero manual intervention needed)
-    const candidateBots = targetBotId 
-      ? currentBots.filter(b => b.id === targetBotId)
-      : (currentBots.some(b => b.status === 'RUNNING') ? currentBots.filter(b => b.status === 'RUNNING') : currentBots);
+    const candidateBots = currentBots.filter(b => b.status === 'RUNNING' && (!targetBotId || b.id === targetBotId));
 
     if (candidateBots.length === 0) return;
 
     // Watchdog check: If no trade has happened for > 5 seconds, trigger immediate high-priority cycle
     const timeSinceLastTradeSec = (now - lastTradeTimeRef.current) / 1000;
     const isWatchdogTrigger = timeSinceLastTradeSec >= 5.0;
-
-    // Balance health safeguard in Paper mode: auto-replenish if capital is low
-    if (!isLive && currentSet.simulatedBalanceUsdt < 100) {
-      setSettings(prev => ({
-        ...prev,
-        simulatedBalanceUsdt: 1000.00
-      }));
-    }
 
     // 0. HIGH-FREQUENCY SCALP WATCHDOG FOR REAL BINANCE SPOT HOLDINGS:
     // Automatically monitor real coins in Binance spot wallet (e.g. OGN, RLC) and lock profit immediately!
@@ -1161,6 +1076,7 @@ export default function App() {
     }
 
     let hasExecutedBuyThisCycle = false;
+    let paperReservedThisCycle = 0;
 
     candidateBots.forEach((bot, botIdx) => {
       // DIVERSIFIED ALTCOIN EXECUTION ENGINE WITH STRICT MULTI-PARAMETER BUY FILTER:
@@ -1175,7 +1091,7 @@ export default function App() {
         ...spotBalancesRef.current.filter(s => s.asset !== 'USDT' && s.asset !== 'TRY' && s.asset !== 'BNB' && (s.estimatedUsd || 0) >= 2.0).map(s => `${s.asset}USDT`)
       ]);
 
-      if (isAltcoinHunter && currentTickers && currentTickers.length > 0) {
+      if (!bot.hasOpenPosition && isAltcoinHunter && currentTickers && currentTickers.length > 0) {
         // SERT TOKEN ALIM FİLTRESİ: Tüm parametreleri süzgeçten geçir (Hacim, Sağlıklı İvme, Tepe Korunumu, Kâr Skoru)
         const qualifiedPicks = getBestBuyCandidates(currentTickers, busySymbols, 10);
         
@@ -1209,7 +1125,7 @@ export default function App() {
         }
       }
 
-      const livePrice = currentPrices[targetSymbol] || currentPrices[bot.symbol];
+      const livePrice = paperSymbolPrice(currentPrices,targetSymbol);
       if (!livePrice || livePrice <= 0) return;
 
       const hasPosition = !!bot.hasOpenPosition;
@@ -1268,6 +1184,7 @@ export default function App() {
           lastTradeTimeRef.current = now;
           const targetTpPercent = candidateEvaluation?.recommendedTakeProfitPercent || bot.takeProfitPercent;
           const targetSlPercent = candidateEvaluation?.recommendedTrailingStopPercent || bot.trailingStopPercent;
+        if(!Number.isFinite(targetTpPercent)||targetTpPercent<=0||!Number.isFinite(targetSlPercent)||targetSlPercent<=0||targetSlPercent>=100)return;
           const tpPrice = parseFloat((livePrice * (1 + targetTpPercent / 100)).toFixed(2));
           const slPrice = parseFloat((livePrice * (1 - targetSlPercent / 100)).toFixed(2));
           const fallbackQty = parseFloat((liveTradeSize / livePrice).toFixed(4));
@@ -1470,11 +1387,15 @@ export default function App() {
 
         // --- SUB-BRANCH 2: PAPER SIMULATION EXECUTION ---
         // GÜN İÇİ SERMAYE KORUMASI: Tek bir tokene portföyün max %20'si ayrılır (asla tüm kasa bağlanmaz)
-        const maxPaperCapital = Math.max(50, Math.min(180, currentSet.simulatedBalanceUsdt * 0.20));
-        const tradeCapital = Math.min(bot.allocatedCapitalUsdt, maxPaperCapital);
-        const amount = parseFloat((tradeCapital / livePrice).toFixed(4));
+        const freePaperCapital = Math.max(0,paperAvailableCapital(currentSet.simulatedBalanceUsdt,currentBots)-paperReservedThisCycle);
+        const maxPaperCapital = Math.min(180,freePaperCapital*0.20);
+        const tradeCapital = Math.min(bot.allocatedCapitalUsdt,maxPaperCapital);
+        const amount = Math.floor((tradeCapital/livePrice)*1e8)/1e8;
+        if(!Number.isFinite(amount)||amount<=0||!Number.isFinite(tradeCapital)||tradeCapital<=0)return;
+        paperReservedThisCycle += amount*livePrice;
         const targetTpPercent = candidateEvaluation?.recommendedTakeProfitPercent || bot.takeProfitPercent;
         const targetSlPercent = candidateEvaluation?.recommendedTrailingStopPercent || bot.trailingStopPercent;
+        if(!Number.isFinite(targetTpPercent)||targetTpPercent<=0||!Number.isFinite(targetSlPercent)||targetSlPercent<=0||targetSlPercent>=100)return;
         const slPrice = parseFloat((livePrice * (1 - targetSlPercent / 100)).toFixed(2));
         const tpPrice = parseFloat((livePrice * (1 + targetTpPercent / 100)).toFixed(2));
 
@@ -1507,6 +1428,10 @@ export default function App() {
           symbol: targetSymbol,
           hasOpenPosition: true,
           entryPrice: livePrice,
+          highestPriceSinceEntry: livePrice,
+          positionOrderId: orderId,
+          trailingStopPercent: targetSlPercent,
+          takeProfitPercent: targetTpPercent,
           positionQty: amount,
           positionOpenedAt: now,
           lastSignal: 'BUY',
@@ -1532,64 +1457,28 @@ export default function App() {
 
       // CASE B: Bot has an open position -> EVALUATE TAKE-PROFIT OR STOP-LOSS WITH ANTI-FEE SHIELD
       if (hasPosition) {
-        const entryP = bot.entryPrice || livePrice;
-        const livePnlPct = ((livePrice - entryP) / entryP) * 100;
-        const timeInTradeSec = bot.positionOpenedAt ? (now - bot.positionOpenedAt) / 1000 : 30;
-
-        // Binance Commission Aware Net PnL Calculation (with BNB 25% discount support!)
-        const hasBnbFeeDiscount = !!currentSet.bnbBudget?.discountActive || (spotBalancesRef.current.some(x => x.asset === 'BNB' && x.free * 680 >= 1.0));
-        const roundTripFeeRate = hasBnbFeeDiscount ? 0.0015 : 0.0020; // 0.075% x 2 with BNB vs 0.10% x 2 standard
-        const roundTripFeePct = hasBnbFeeDiscount ? 0.15 : 0.20;
-        const spreadSafetyBufferPct = 0.10; // 0.10% tahta alış-satış makas payı
-        const totalBreakevenPct = roundTripFeePct + spreadSafetyBufferPct; // ~0.30% başabaş noktası
-
-        // --- ASLA ZARARINA SATMA (SIFIR KAYIP / YALNIZCA NET KÂRLA SATIŞ YAP) ---
-        // 1. ZARAR KORUMASI: Fiyat maliyetin altındaysa veya başabaş komisyonunu karşılamıyorsa ASLA SATMA!
-        if (livePnlPct <= totalBreakevenPct) {
-          const holdStatusMsg = `🛡️ SIFIR KAYIP KORUMASI: ${bot.symbol} maliyetin altında ($${livePrice.toFixed(4)} / Giriş: $${entryP.toFixed(4)}, %${livePnlPct.toFixed(2)}). Asla zararına satılmaz; +%${(bot.takeProfitPercent || 2.8).toFixed(1)} net kâr hedefine kadar tutuluyor (HODL).`;
-          if (bot.lastAction !== holdStatusMsg) {
-            setBots(prev => prev.map(b => b.id === bot.id ? { ...b, lastAction: holdStatusMsg } : b));
-          }
-          return; // ERKEN ÇIKIŞ: Zararına satış KESİNLİKLE yasaklandı!
-        }
-
-        // 2. YALNIZCA NET KÂRLA SATIŞ YAP:
-        // Komisyon ve spread düşüldükten sonra Net Kâr en az +%1.50 - +%3.20 olmalıdır.
-        const requiredGrossProfitPct = Math.max(bot.takeProfitPercent || 2.5, totalBreakevenPct + 1.20);
-        const isTakeProfit = livePnlPct >= requiredGrossProfitPct;
-
-        // Force komutu dahi olsa başabaş komisyonunu kurtarmayan satış yapılmaz
-        const shouldSell = isTakeProfit || (force && livePnlPct > totalBreakevenPct + 0.50);
-        if (!shouldSell) {
-          return;
-        }
-
+        // Paper only: a trailing stop can realize a loss. Do not invent missing entry/quantity.
+        const exit=paperExit({entry:bot.entryPrice!,price:livePrice,quantity:bot.positionQty!,highest:bot.highestPriceSinceEntry,stopPercent:bot.trailingStopPercent,takeProfitPercent:bot.takeProfitPercent,feeRate:0.001});
+        if(!exit)return;
+        if(exit.highest!==bot.highestPriceSinceEntry)setBots(prev=>prev.map(b=>b.id===bot.id?{...b,highestPriceSinceEntry:exit.highest}:b));
+        if(!exit.reason)return;
         lastTradeTimeRef.current = now;
-
-        const isWin = true;
-        const finalPnlPct = livePnlPct;
-
-        const binanceFeeUsdt = parseFloat((bot.allocatedCapitalUsdt * roundTripFeeRate).toFixed(4));
-        const rawProfitUsdt = parseFloat(((bot.allocatedCapitalUsdt * finalPnlPct) / 100).toFixed(2));
-        const netProfitUsdt = parseFloat((rawProfitUsdt - binanceFeeUsdt).toFixed(2));
-        const netPnlPct = parseFloat((finalPnlPct - roundTripFeePct).toFixed(2));
-
-        if (netProfitUsdt <= 0 || netPnlPct <= 0) {
-          return; // Net kâr pozitif değilse satma!
-        }
-
-        const newTradesCount = bot.tradesCount + 1;
-        const newWinRate = Math.min(99, Math.round(((bot.winRate * bot.tradesCount) + 100) / newTradesCount));
-        const newTotalProfit = parseFloat((bot.totalProfitUsdt + netProfitUsdt).toFixed(2));
-        const newTotalPercent = parseFloat(((newTotalProfit / bot.allocatedCapitalUsdt) * 100).toFixed(2));
-
-        const actionMsg = `🎯 $${livePrice.toFixed(4)} gün içi net kâr alındı (+%${netPnlPct.toFixed(2)} Net, Komisyon: -$${binanceFeeUsdt.toFixed(3)})`;
+        const isWin=exit.isWin,finalPnlPct=exit.grossPercent;
+        const binanceFeeUsdt=parseFloat(exit.fees.toFixed(8)); // Explicit assumed PAPER fee, not verified Binance fees.
+        const rawProfitUsdt=parseFloat(exit.gross.toFixed(8));
+        const netProfitUsdt=parseFloat(exit.net.toFixed(8));
+        const netPnlPct=parseFloat(exit.netPercent.toFixed(4));
+        const newTradesCount=bot.tradesCount+1;
+        const newWinRate=nextPaperWinRate(bot.tradesCount,bot.winRate,isWin);
+        const newTotalProfit=parseFloat((bot.totalProfitUsdt+netProfitUsdt).toFixed(8));
+        const newTotalPercent=bot.allocatedCapitalUsdt>0?newTotalProfit/bot.allocatedCapitalUsdt*100:0;
+        const actionMsg=`Simüle ${exit.reason==='STOP_LOSS'?'stop':'kâr hedefi'}: $${livePrice.toFixed(4)}, net ${netPnlPct>=0?'+':''}%${netPnlPct.toFixed(2)} (varsayılan ücret: $${binanceFeeUsdt.toFixed(4)})`;
 
         // Update matching open order to FILLED with explicit fee & net PnL
         setOrders(prev => {
           let matched = false;
           const updated = prev.map(o => {
-            if (!matched && o.symbol === bot.symbol && o.status === 'PENDING') {
+            if (!matched && o.symbol === bot.symbol && o.status === 'PENDING' && (bot.positionOrderId ? o.id === bot.positionOrderId : o.botName === bot.name && o.executionSource === 'BOT')) {
               matched = true;
               return {
                 ...o,
@@ -1612,8 +1501,8 @@ export default function App() {
               side: 'SELL',
               type: 'MARKET',
               price: livePrice,
-              amount: bot.positionQty || parseFloat((bot.allocatedCapitalUsdt / livePrice).toFixed(4)),
-              totalUsdt: bot.allocatedCapitalUsdt,
+              amount: bot.positionQty!,
+              totalUsdt: bot.positionQty! * bot.entryPrice!,
               status: 'FILLED',
               pnl: rawProfitUsdt,
               pnlPercent: parseFloat(finalPnlPct.toFixed(2)),
@@ -1623,42 +1512,17 @@ export default function App() {
               timestamp: now,
               executionSource: 'BOT',
               botName: bot.name,
-              takeProfitPrice: parseFloat((livePrice * 1.03).toFixed(2)),
-              stopLossPrice: parseFloat((livePrice * 0.98).toFixed(2))
+              takeProfitPrice: exit.takeProfitPrice,
+              stopLossPrice: exit.stopPrice
             };
             return [closedOrder, ...updated.filter(o => o.id !== closedOrder.id).slice(0, 99)];
           }
           return updated;
         });
 
-        // Update simulated balance in Paper mode with Net Profit
-        if (!isLive) {
-          setSettings(prev => ({
-            ...prev,
-            simulatedBalanceUsdt: parseFloat((prev.simulatedBalanceUsdt + netProfitUsdt).toFixed(2))
-          }));
-        } else {
-          // In Live mode, return actual position capital + profit to available cash, strictly clamped to vault
-          setSettings(prev => {
-            const vault = prev.liveSpotBalanceUsdt || 39.50;
-            const returnedCapital = Math.min(14.0, bot.allocatedCapitalUsdt || 10.0);
-            const currentCash = Math.min(vault, prev.availableCashUsdt !== undefined ? prev.availableCashUsdt : 3.04);
-            const updatedCash = Math.min(vault, parseFloat((currentCash + returnedCapital + netProfitUsdt).toFixed(2)));
-            return {
-              ...prev,
-              availableCashUsdt: updatedCash,
-              totalFeesSavedBnbDiscountUsdt: hasBnbFeeDiscount
-                ? parseFloat(((prev.totalFeesSavedBnbDiscountUsdt || 0) + (binanceFeeUsdt * 0.25)).toFixed(3))
-                : prev.totalFeesSavedBnbDiscountUsdt
-            };
-          });
-        }
-
-        // Reinvest 100% of positive profit into compounding bot capital, capped at max single token limit (14 USDT)
-        const reinvestRate = (currentSet.compoundReinvestmentRate !== undefined ? currentSet.compoundReinvestmentRate : 100) / 100;
-        const compoundedCapital = isWin && netProfitUsdt > 0
-          ? Math.min(14.0, parseFloat((bot.allocatedCapitalUsdt + (netProfitUsdt * reinvestRate)).toFixed(2)))
-          : Math.min(14.0, bot.allocatedCapitalUsdt);
+        setSettings(prev=>({...prev,simulatedBalanceUsdt:parseFloat((prev.simulatedBalanceUsdt+netProfitUsdt).toFixed(8))}));
+        const reinvestRate=Math.max(0,Math.min(100,currentSet.compoundReinvestmentRate??100))/100;
+        const compoundedCapital=Math.max(0,bot.allocatedCapitalUsdt+netProfitUsdt*(isWin?reinvestRate:1));
 
         // Update bot state: clear position and reset to SCANNER so it hunts the next top gainer!
         setBots(prev => prev.map(b => b.id === bot.id ? {
@@ -1667,13 +1531,15 @@ export default function App() {
           hasOpenPosition: false,
           allocatedCapitalUsdt: compoundedCapital,
           entryPrice: undefined,
+          highestPriceSinceEntry: undefined,
+          positionOrderId: undefined,
           positionQty: undefined,
           positionOpenedAt: undefined,
           tradesCount: newTradesCount,
           winRate: newWinRate,
           totalProfitUsdt: newTotalProfit,
           totalProfitPercent: newTotalPercent,
-          currentCapitalUsdt: parseFloat((compoundedCapital + newTotalProfit).toFixed(2)),
+          currentCapitalUsdt: parseFloat(compoundedCapital.toFixed(8)),
           lastSignal: 'SELL',
           lastAction: actionMsg
         } : b));
@@ -1681,58 +1547,18 @@ export default function App() {
         addStrategyLog({
           botName: bot.name,
           symbol: bot.symbol,
-          type: isWin ? 'TAKE_PROFIT' : 'STOP_LOSS',
-          message: `${actionMsg}. Net Kazanç: ${netProfitUsdt >= 0 ? '+' : ''}$${netProfitUsdt.toFixed(2)} USDT`,
+          type: exit.reason,
+          message: `${actionMsg}. Simüle Net Sonuç: ${netProfitUsdt >= 0 ? '+' : ''}$${netProfitUsdt.toFixed(2)} USDT`,
           pnl: netProfitUsdt,
           pnlPercent: netPnlPct
         });
 
-        // LIVE BINANCE SELL EXECUTION WITH ZERO LOSS ENFORCEMENT
-        if (isLive && currentSet.autoLiveExecutionEnabled && currentSet.binanceApiKey && currentSet.binanceSecretKey) {
-          const liveTradeSize = currentSet.liveTradeAmountUsdt || 15.0;
-          const sellQty = bot.positionQty ? bot.positionQty.toString() : (livePrice > 0 ? (liveTradeSize / livePrice).toFixed(4) : undefined);
-          fetch('/api/binance/order', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              apiKey: currentSet.binanceApiKey,
-              secretKey: currentSet.binanceSecretKey,
-              exchange: currentSet.exchange || 'BINANCE',
-              symbol: bot.symbol,
-              side: 'SELL',
-              type: 'MARKET',
-              quantity: sellQty,
-              allowLoss: false // SIFIR KAYIP ŞARTI: Borsa seviyesinde koruma
-            })
-          }).then(r => r.json()).then(resData => {
-            if (resData.success) {
-              addNotification({
-                type: 'TAKE_PROFIT',
-                title: `⚡ ${bot.name}: Canlı Binance Net Kâr Satışı Onaylandı`,
-                message: `${bot.symbol} için net kâr satışı borsa tarafından onaylandı. (Emir No: ${resData.orderId || '-'})`,
-                symbol: bot.symbol
-              });
-            } else {
-              const nowTime = Date.now();
-              if (nowTime - lastLiveErrorNotifyRef.current > 25000) {
-                lastLiveErrorNotifyRef.current = nowTime;
-                addNotification({
-                  type: 'SYSTEM',
-                  title: `🛡️ Sıfır Kayıp Kalkanı (${bot.symbol})`,
-                  message: `${resData.error || 'Borsa satış emri reddetti'}`,
-                  symbol: bot.symbol
-                });
-              }
-            }
-          }).catch(() => {});
-        }
-
-        soundManager.playProfitChime();
+        if(isWin)soundManager.playProfitChime();
 
         addNotification({
-          type: 'TAKE_PROFIT',
-          title: `🎯 ${bot.name}: Gün İçi Net Kâr Alındı`,
-          message: `${bot.symbol} ${actionMsg}. Net Kazanç: +$${netProfitUsdt.toFixed(2)} USDT`,
+          type: exit.reason,
+          title: `${bot.name}: Simüle ${exit.reason==='STOP_LOSS'?'Stop':'Kâr Hedefi'}`,
+          message: `${bot.symbol} ${actionMsg}. Simüle Net Sonuç: $${netProfitUsdt.toFixed(4)} USDT`,
           symbol: bot.symbol
         });
       }
@@ -1885,122 +1711,17 @@ export default function App() {
     }, 250);
   };
 
-  // Deploy AI signal directly into an active bot
-  const handleApplyAIToBot = (pred: AIPredictionResult) => {
-    const newBotName = `AI ${selectedSymbol.replace('USDT', '')} Optimizer`;
-    const allocSize = Math.min(settings.simulatedBalanceUsdt, Math.round(settings.simulatedBalanceUsdt * (pred.recommendedPositionSizePercent / 100)) || 150);
-    handleCreateBot({
-      name: newBotName,
-      symbol: selectedSymbol,
-      strategy: 'AI_SCALPER',
-      status: 'RUNNING',
-      allocatedCapitalUsdt: allocSize > 0 ? allocSize : 150,
-      trailingStopPercent: pred.suggestedStopLossPercent,
-      takeProfitPercent: pred.suggestedTakeProfitPercent,
-    });
-    setActiveTab('bots');
+  // Model-generated suggestions are informational, not executable signals.
+  const handleApplyAIToBot = (_pred: AIPredictionResult) => {
+    addNotification({ type: 'SYSTEM', title: 'Model çıktısı', message: 'Doğrulanmamış model çıktısından bot oluşturulmadı.' });
   };
-
-  // Deploy autonomous bot from Hacker Alpha intelligence
-  const handleAutoDeployAlphaBot = (opp: AlphaOpportunity) => {
-    setSelectedSymbol(opp.symbol);
-    const totalCap = settings.tradingMode === 'LIVE_API' 
-      ? (settings.liveSpotBalanceUsdt || settings.availableCashUsdt || 39.50) 
-      : settings.simulatedBalanceUsdt;
-    const alreadyHeld = spotBalancesRef.current.some(s => 
-      s.asset !== 'USDT' && s.asset !== 'TRY' && 
-      (s.symbol === opp.symbol || `${s.asset}USDT` === opp.symbol) && 
-      (s.estimatedUsd || 0) >= 2.0
-    );
-    if (alreadyHeld) return;
-
-    const maxAlloc = settings.tradingMode === 'LIVE_API' 
-      ? Math.max(10, Math.min(13, totalCap * 0.20)) 
-      : Math.max(50, Math.min(180, totalCap * 0.20));
-    const allocSize = settings.tradingMode === 'LIVE_API' 
-      ? Math.min(settings.liveTradeAmountUsdt || 11.50, maxAlloc) 
-      : maxAlloc;
-
-    const netTarget = Math.min(4.8, Math.max(1.4, parseFloat(opp.expectedReturnPercent.replace(/[^0-9.]/g, '')) || 2.8));
-
-    handleCreateBot({
-      name: `Alpha Scalp: ${opp.symbol}`,
-      symbol: opp.symbol,
-      strategy: 'AI_SCALPER',
-      status: 'RUNNING',
-      allocatedCapitalUsdt: allocSize > 0 ? allocSize : 11.50,
-      trailingStopPercent: opp.recommendedStopLoss || 1.2,
-      takeProfitPercent: netTarget + 0.20, // Gross target covers Binance 0.20% fee!
-    });
-
-    // Also trigger instant live order if LIVE_API and authorized
-    if (
-      settings.tradingMode === 'LIVE_API' &&
-      settings.autoLiveExecutionEnabled &&
-      settings.binanceApiKey &&
-      settings.binanceSecretKey
-    ) {
-      const liveAmt = Math.min(settings.liveTradeAmountUsdt || 11.50, maxAlloc);
-      const currentCash = typeof settings.availableCashUsdt === 'number' ? settings.availableCashUsdt : 0;
-      const minReserve = Math.max(10.0, totalCap * 0.20);
-      if (currentCash < 10.0 || (currentCash - liveAmt) < minReserve) {
-        // Cash preservation: do not attempt order if cash would drop below reserve
-        return;
-      }
-      fetch('/api/binance/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          apiKey: settings.binanceApiKey,
-          secretKey: settings.binanceSecretKey,
-          exchange: settings.exchange || 'BINANCE',
-          symbol: opp.symbol,
-          side: 'BUY',
-          type: 'MARKET',
-          quoteOrderQty: liveAmt.toString()
-        })
-      }).then(r => r.json()).then(res => {
-        if (res.success) {
-          setSettings(prev => {
-            const currentAvail = typeof prev.availableCashUsdt === 'number' ? prev.availableCashUsdt : 3.04;
-            return {
-              ...prev,
-              availableCashUsdt: Math.max(0, parseFloat((currentAvail - liveAmt).toFixed(2)))
-            };
-          });
-          addNotification({
-            type: 'TRADE_BUY',
-            title: `⚡ Otonom Alım: ${opp.symbol}`,
-            message: `Hacker istihbaratı (${opp.source}) doğrultusunda $${liveAmt} tutarında canlı Binance piyasa alımı gerçekleştirildi (Max %25 Korumalı).`,
-            symbol: opp.symbol
-          });
-        }
-      }).catch(() => {});
-    }
-
-    soundManager.playBuyChime();
-    addNotification({
-      type: 'SYSTEM',
-      title: `⚡ Otonom Bot Devrede: ${opp.symbol}`,
-      message: `"${opp.alphaHeadline}" istihbaratı için özel bot kuruldu ve aktif alım-satım motoruna bağlandı.`,
-      symbol: opp.symbol
-    });
-    // Stay on current tab so user can review opportunities
+  const handleAutoDeployAlphaBot = (_opp: AlphaOpportunity) => {
+    addNotification({ type: 'SYSTEM', title: 'Model çıktısı', message: 'Haber veya zincir üstü kanıtla doğrulanmamış öneriden bot oluşturulmadı.' });
   };
 
   // Deploy backtested strategy into an active bot
-  const handleDeployBacktest = (params: { symbol: string; strategy: string; stopLoss: number; takeProfit: number }) => {
-    const allocSize = Math.min(settings.simulatedBalanceUsdt, 250);
-    handleCreateBot({
-      name: `Backtest Optimize: ${params.symbol}`,
-      symbol: params.symbol,
-      strategy: 'AI_SCALPER',
-      status: 'RUNNING',
-      allocatedCapitalUsdt: allocSize > 0 ? allocSize : 200,
-      trailingStopPercent: params.stopLoss,
-      takeProfitPercent: params.takeProfit,
-    });
-    setActiveTab('bots');
+  const handleDeployBacktest = (_params: { symbol: string; strategy: string; stopLoss: number; takeProfit: number }) => {
+    addNotification({ type: 'SYSTEM', title: 'Demo sonucu', message: 'Rastgele örnek sonuçtan bot oluşturulmadı. Gerçek backtest motoru bağlanmalıdır.' });
   };
 
   // Simulate Gem Buy from Early Radar
@@ -2052,7 +1773,7 @@ export default function App() {
   const handleRestoreBackup = (jsonContent: string) => {
     try {
       const parsed = JSON.parse(jsonContent);
-      if (parsed.settings) setSettings(parsed.settings);
+      if (parsed.settings) setSettings({ ...defaultSettings, ...safeSettings(parsed.settings) } as UserSecuritySettings);
       if (Array.isArray(parsed.bots)) setBots(parsed.bots);
       if (Array.isArray(parsed.orders)) setOrders(parsed.orders);
     } catch (err) {
@@ -2065,6 +1786,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#060911] text-slate-100 flex flex-col font-sans">
+      <div role="status" className="border-b border-amber-500/40 bg-amber-950/60 px-4 py-3 text-sm text-amber-200">
+        {(navigator.language || '').toLowerCase().startsWith('tr')
+          ? 'Canlı emir yürütme geçici olarak durduruldu. Paper mod kullanılabilir. Mevcut borsa pozisyonlarınızı borsadan takip edin; bu sürüm otomatik koruma emri göndermez.'
+          : 'Live execution is temporarily paused. Paper mode is available. Manage existing positions on the exchange; this version does not submit protective orders.'}
+      </div>
+      <div role="status" className="bg-slate-900 border-b border-slate-700 px-4 py-2 text-sm text-cyan-200">{marketMessage} • Grafik boşsa mum verisi alınamadı veya eskidi.</div>
+      {modelMessage && <p role="status" className="bg-slate-900 px-4 py-2 text-sm text-amber-200">{modelMessage}</p>}
       {/* 2FA PIN Lock Screen Modal */}
       {isLocked && (
         <TwoFactorModal
@@ -2178,20 +1906,20 @@ export default function App() {
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-extrabold text-emerald-300 font-sans flex items-center gap-1.5 tracking-wide">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                ASLA ZARARINA SATMA MODU DEVREDE
+                GELİŞTİRME / PAPER MOD
               </span>
               <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/40 font-mono font-bold">
-                SIFIR KAYIP / SADECE NET KÂR
+                GETİRİ GARANTİSİ YOK
               </span>
               <span className="text-[10px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/40 font-mono font-bold">
-                REBALANCE KORUMASI AKTİF
+                CANLI YÜRÜTME KAPALI
               </span>
               <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded border border-purple-500/40 font-mono font-bold">
-                MİNİMUM NET KÂR: +%2.50
+                STRATEJİ HEDEFİ: +%2.50
               </span>
             </div>
             <p className="text-[11px] text-slate-300 font-sans mt-0.5">
-              <strong>Kasa Erimesi Kesin Olarak Engellendi:</strong> Zararda olan altcoinler (ARPA, AI, ERA, NIGHT) asla satılmaz, kâr hedefine ulaşana kadar sabırla tutulur. Alış (%0.10) ve satış (%0.10) Binance komisyonları peşinen hesaplanır; yalnızca komisyonlar ve makas düşüldükten sonra net kâr bırakan satışlara izin verilir.
+              <strong>Test sürümü:</strong> Paper sonuçları borsa işlemi değildir. Canlı emirler kapalıdır. Risk yönetimi zarar ihtimalini ortadan kaldırmaz; mevcut gerçek pozisyonlarınızı borsadan yönetin.
             </p>
           </div>
         </div>
@@ -2408,3 +2136,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -49,6 +49,13 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     };
   }, [candles]);
 
+  if (!candles.length) return (
+    <section className="flex min-h-[360px] flex-col rounded-lg border border-slate-800 bg-[#0b101d] p-4" aria-label="Mum grafiği">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300"><strong>{symbol}</strong>{intervals.map(value => <button type="button" key={value} onClick={() => onIntervalChange(value)} className="rounded border border-slate-700 px-2 py-1">{value}</button>)}</div>
+      <p role="status" className="m-auto text-center text-amber-200">Güncel mum verisi yok.<br />Bağlantı yenilenince grafik tekrar gösterilecek.</p>
+    </section>
+  );
+
   const activeCandle = hoverIndex !== null && candles[hoverIndex] ? candles[hoverIndex] : candles[candles.length - 1];
 
   // Price to Y coordinate percentage
@@ -263,3 +270,4 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     </div>
   );
 };
+

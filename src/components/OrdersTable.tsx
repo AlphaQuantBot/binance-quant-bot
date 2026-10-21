@@ -50,6 +50,7 @@ export const OrdersTable: React.FC<OrdersTableProps> = ({
 
   return (
     <div className="bg-[#0b101d] rounded-lg border border-slate-800/80 p-3 flex flex-col h-full text-xs font-mono select-none space-y-3">
+      <p role="status" className="text-xs text-amber-300 p-2">Yerel işlem kayıtları • Borsa mutabakatı yapılmadı; bu liste gerçekleşmiş borsa işleminin kanıtı değildir.</p>
       {/* Live Binance Spot Holdings Tracker (Direct Real Wallet Positions) */}
       {activeSpotHoldings.length > 0 && (
         <div className="p-3 bg-gradient-to-r from-emerald-950/40 via-slate-900/90 to-cyan-950/40 border border-emerald-500/40 rounded-lg shadow-sm">
@@ -359,3 +360,4 @@ export const OrdersTable: React.FC<OrdersTableProps> = ({
     </div>
   );
 };
+

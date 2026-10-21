@@ -105,6 +105,7 @@ export const Backtester: React.FC<BacktesterProps> = ({
 
   return (
     <div className="space-y-4">
+      <p role="status" className="text-xs text-amber-300 p-2">DEMO SONUÇLAR • Rastgele örnek hesaplama; geçmiş piyasa verisiyle yapılmış backtest değildir.</p>
       {/* Top Banner */}
       <div className="bg-[#0b101d] rounded-lg border border-slate-800/80 p-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -152,7 +153,7 @@ export const Backtester: React.FC<BacktesterProps> = ({
               onChange={(e) => setStrategy(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-emerald-500"
             >
-              <option value="SUPERTREND_VWAP_ALPHA">⚡ Supertrend + VWAP Quant (%86 Win Rate)</option>
+              <option value="SUPERTREND_VWAP_ALPHA">⚡ Supertrend + VWAP Quant (Demo)</option>
               <option value="QUANT_MOMENTUM_COMPOUND">🚀 FreqAI Compound Momentum (Max Alpha)</option>
               <option value="AI_SCALPER">AI Volatility Scalper</option>
               <option value="BREAKOUT">Breakout Momentum</option>
@@ -361,3 +362,4 @@ export const Backtester: React.FC<BacktesterProps> = ({
     </div>
   );
 };
+

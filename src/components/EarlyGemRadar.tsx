@@ -66,6 +66,7 @@ export const EarlyGemRadar: React.FC<EarlyGemRadarProps> = ({
 
   return (
     <div className="space-y-4">
+      <p role="status" className="rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm text-amber-200">ÖRNEK VERİ • Bu liste canlı DEX taraması değildir. Olasılık, hacim ve güvenlik değerleri doğrulanmamış gösterim verileridir.</p>
       {/* Top Banner */}
       <div className="bg-[#0b101d] rounded-lg border border-slate-800/80 p-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -80,11 +81,11 @@ export const EarlyGemRadar: React.FC<EarlyGemRadarProps> = ({
                 Erken Aşama Gem & Pre-Binance Token Radarı
               </h2>
               <span className="text-[10px] font-mono bg-amber-950/60 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">
-                DEX & On-Chain Likidite Taraması
+                Örnek Radar Listesi
               </span>
             </div>
             <p className="text-xs text-slate-400 font-sans mt-0.5">
-              Henüz Binance veya ana borsalarda listelenmemiş, balina akışları ve likidite kilitleri pozitif olan potansiyel altcoinleri anlık tespit eder.
+              Arayüz gösterimi için hazırlanmış örnek token kartları. Canlı tarama ve alarm hizmeti bağlı değildir.
             </p>
           </div>
         </div>
@@ -211,7 +212,7 @@ export const EarlyGemRadar: React.FC<EarlyGemRadarProps> = ({
                     <div className="p-2 bg-slate-900/40 rounded border border-slate-800/80">
                       <span className="text-[10px] text-slate-500 block">Honeypot Riski</span>
                       <span className="font-semibold text-emerald-400 text-[11px]">
-                        {gem.honeypotRisk} (Güvenli)
+                        {gem.honeypotRisk} (Örnek)
                       </span>
                     </div>
                   </div>
@@ -226,7 +227,7 @@ export const EarlyGemRadar: React.FC<EarlyGemRadarProps> = ({
                 {/* Card Actions */}
                 <div className="pt-3 border-t border-slate-800/70 flex items-center justify-between gap-2 mt-1">
                   <button
-                    onClick={() => handleAlertClick(gem)}
+                    disabled title="Canlı alarm hizmeti bağlı değil"
                     className={`px-3 py-1.5 rounded text-xs font-sans flex items-center gap-1.5 transition-colors ${
                       isAlertActive 
                         ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
@@ -260,3 +261,4 @@ export const EarlyGemRadar: React.FC<EarlyGemRadarProps> = ({
     </div>
   );
 };
+

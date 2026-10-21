@@ -1,0 +1,19 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {planStopReplacement} from '../src/server/stopReplacement';
+import {settleTrades} from '../src/server/tradeSettlement';
+import {rulesFixture,policyFixture} from './fixtures/trading';
+import type {Record as OrderRecord} from '../src/server/orderExecution';
+import type {AccountSnapshot} from '../src/server/accountSnapshot';
+function fixture(){
+ const previous:OrderRecord={requestId:'old_stop_001',accountId:'account1',symbol:'BTCUSDT',side:'SELL',quantity:'2',limitPrice:'89',stopPrice:'90',clientOrderId:'aq_'+'a'.repeat(32),status:'CANCELED',cancelState:'RESOLVED',confirmation:{clientOrderId:'aq_'+'a'.repeat(32),symbol:'BTCUSDT',side:'SELL',orderId:'12',status:'CANCELED',executedQty:'0',quoteQty:'0',updateTime:999}};
+ previous.confirmation!.settlement=settleTrades(previous.confirmation!,[]);
+ const account:AccountSnapshot={environment:'BINANCE_TESTNET',accountId:'account1',startedAt:1000,observedAt:1001,canTrade:true,balances:[{asset:'BTC',free:'2',locked:'0'}],openOrders:[]};
+ const context=rulesFixture();context.orderTypes.push('STOP_LOSS_LIMIT');return {previous,account,context,policy:policyFixture(),requestId:'new_stop_002',stopPrice:'95',limitPrice:'94'};
+}
+test('reconciled canceled stop yields a non-authorizing replacement proposal',()=>{const p=planStopReplacement(fixture(),1002);assert.equal(p.state,'REPLACEMENT_PROPOSED');assert.equal(p.submissionAuthorized,false);assert.equal(p.candidate?.quantity,'2');});
+test('partial sale and base commission reduce quantity; lot dust is explicit',()=>{const f=fixture(),e=f.previous.confirmation!;e.executedQty='1';e.quoteQty='90';e.settlement=settleTrades(e,[{tradeId:'1',orderId:'12',symbol:'BTCUSDT',side:'SELL',quantity:'1',quoteQuantity:'90',commission:'0.0005',commissionAsset:'BTC'}]);f.account.balances[0].free='0.9995';const p=planStopReplacement(f,1002);assert.equal(p.remainingQuantity,'0.9995');assert.equal(p.candidate?.quantity,'0.999');assert.equal(p.dustQuantity,'0.0005');});
+test('full fill produces closed position and no replacement',()=>{const f=fixture(),e=f.previous.confirmation!;f.previous.status=e.status='FILLED';e.executedQty='2';e.quoteQty='180';e.settlement=settleTrades(e,[{tradeId:'1',orderId:'12',symbol:'BTCUSDT',side:'SELL',quantity:'2',quoteQuantity:'180',commission:'0.18',commissionAsset:'USDT'}]);f.account.balances[0].free='0';const p=planStopReplacement(f,1002);assert.equal(p.state,'POSITION_CLOSED');assert.equal('candidate' in p,false);});
+test('unknown cancellation, missing fees, changed balance and old snapshot block proposals',()=>{for(const mutate of [(f:ReturnType<typeof fixture>)=>{f.previous.cancelState='UNKNOWN';},(f:ReturnType<typeof fixture>)=>{delete f.previous.confirmation!.settlement;},(f:ReturnType<typeof fixture>)=>{f.account.balances[0].free='1';},(f:ReturnType<typeof fixture>)=>{f.previous.confirmation!.updateTime=1001;}]){const f=fixture();mutate(f);assert.throws(()=>planStopReplacement(f,1002));}assert.throws(()=>planStopReplacement(fixture(),4000));});
+test('locked balances, active orders and unsafe prices block proposals',()=>{for(const mutate of [(f:ReturnType<typeof fixture>)=>{f.account.balances[0].locked='0.1';},(f:ReturnType<typeof fixture>)=>{f.account.openOrders.push({symbol:'ETHUSDT',orderId:'13',clientOrderId:'external',side:'BUY',status:'NEW',quantity:'1',executedQty:'0'});},(f:ReturnType<typeof fixture>)=>{f.stopPrice='101';},(f:ReturnType<typeof fixture>)=>{f.limitPrice='96';},(f:ReturnType<typeof fixture>)=>{f.stopPrice='95.001';}]){const f=fixture();mutate(f);assert.throws(()=>planStopReplacement(f,1002));}});
+test('unsupported filters and algo count limits are never silently skipped',()=>{for(const filter of [{filterType:'NEW_UNKNOWN_FILTER'},{filterType:'MAX_NUM_ALGO_ORDERS',maxNumAlgoOrders:0}]){const f=fixture();f.context.filters.push(filter);assert.throws(()=>planStopReplacement(f,1002));}});

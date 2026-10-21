@@ -1,3 +1,4 @@
+import { safeSettings } from './safeSettings';
 import { UserSecuritySettings, BotInstance, TradeOrder, AppNotification } from '../types/crypto';
 
 const STORAGE_KEYS = {
@@ -12,7 +13,7 @@ export const defaultSettings: UserSecuritySettings = {
   tradingMode: 'PAPER',
   binanceApiKey: '',
   binanceSecretKey: '',
-  isKeysEncrypted: true,
+  isKeysEncrypted: false,
   is2FAEnabled: false,
   pinHash: '',
   isAppLocked: false,
@@ -21,7 +22,7 @@ export const defaultSettings: UserSecuritySettings = {
   simulatedBalanceUsdt: 1000.00,
   liveSpotBalanceUsdt: 0.00,
   maxDailyDrawdownPercent: 5.0,
-  autoLiveExecutionEnabled: true,
+  autoLiveExecutionEnabled: false,
   liveTradeAmountUsdt: 11.50,
   autoCompoundProfits: true,
   compoundReinvestmentRate: 100,
@@ -42,21 +43,21 @@ export const DEFAULT_BOTS: BotInstance[] = [
     name: '🚀 Kâr Kilitleyici #1: ARPA',
     symbol: 'ARPAUSDT',
     strategy: 'QUANT_MOMENTUM_COMPOUND',
-    status: 'RUNNING',
+    status: 'PAUSED',
     allocatedCapitalUsdt: 7.85,
     currentCapitalUsdt: 7.85,
     totalProfitUsdt: 0,
     totalProfitPercent: 0,
-    tradesCount: 1,
-    winRate: 92,
+    tradesCount: 0,
+    winRate: 0,
     trailingStopPercent: 0, // SIFIR KAYIP: Zararına satış kapalı!
     takeProfitPercent: 2.8,
-    hasOpenPosition: true,
-    entryPrice: 0.01306,
-    positionQty: 765.6,
+    hasOpenPosition: false,
+    entryPrice: 0,
+    positionQty: 0,
     positionOpenedAt: Date.now() - 3600000,
     createdAt: Date.now() - 86400000 * 2,
-    lastAction: '🛡️ Asla Zararına Satma: ARPA ($0.01306) kâr hedefine (+%2.8) ulaşana kadar tutuluyor.',
+    lastAction: 'Paper şablonu; başlatılmadı, gerçek pozisyon değildir.',
     lastSignal: 'HOLD'
   },
   {
@@ -64,21 +65,21 @@ export const DEFAULT_BOTS: BotInstance[] = [
     name: '⚡ Kâr Kilitleyici #2: AI',
     symbol: 'AIUSDT',
     strategy: 'BREAKOUT_MOMENTUM',
-    status: 'RUNNING',
+    status: 'PAUSED',
     allocatedCapitalUsdt: 8.17,
     currentCapitalUsdt: 8.17,
     totalProfitUsdt: 0,
     totalProfitPercent: 0,
-    tradesCount: 1,
-    winRate: 94,
+    tradesCount: 0,
+    winRate: 0,
     trailingStopPercent: 0, // SIFIR KAYIP: Zararına satış kapalı!
     takeProfitPercent: 2.8,
-    hasOpenPosition: true,
-    entryPrice: 0.02300,
-    positionQty: 434.7,
+    hasOpenPosition: false,
+    entryPrice: 0,
+    positionQty: 0,
     positionOpenedAt: Date.now() - 3600000,
     createdAt: Date.now() - 86400000 * 4,
-    lastAction: '🛡️ Asla Zararına Satma: AI ($0.02300) kâr hedefine (+%2.8) ulaşana kadar tutuluyor.',
+    lastAction: 'Paper şablonu; başlatılmadı, gerçek pozisyon değildir.',
     lastSignal: 'HOLD'
   },
   {
@@ -86,21 +87,21 @@ export const DEFAULT_BOTS: BotInstance[] = [
     name: '🎯 Kâr Kilitleyici #3: ERA',
     symbol: 'ERAUSDT',
     strategy: 'SUPERTREND_VWAP_ALPHA',
-    status: 'RUNNING',
+    status: 'PAUSED',
     allocatedCapitalUsdt: 6.02,
     currentCapitalUsdt: 6.02,
     totalProfitUsdt: 0,
     totalProfitPercent: 0,
-    tradesCount: 1,
-    winRate: 90,
+    tradesCount: 0,
+    winRate: 0,
     trailingStopPercent: 0, // SIFIR KAYIP: Zararına satış kapalı!
     takeProfitPercent: 2.8,
-    hasOpenPosition: true,
-    entryPrice: 0.09530,
-    positionQty: 104.9,
+    hasOpenPosition: false,
+    entryPrice: 0,
+    positionQty: 0,
     positionOpenedAt: Date.now() - 3600000,
     createdAt: Date.now() - 86400000,
-    lastAction: '🛡️ Asla Zararına Satma: ERA ($0.09530) kâr hedefine (+%2.8) ulaşana kadar tutuluyor.',
+    lastAction: 'Paper şablonu; başlatılmadı, gerçek pozisyon değildir.',
     lastSignal: 'HOLD'
   },
   {
@@ -108,21 +109,21 @@ export const DEFAULT_BOTS: BotInstance[] = [
     name: '💎 Kâr Kilitleyici #4: NIGHT',
     symbol: 'NIGHTUSDT',
     strategy: 'AI_SCALPER',
-    status: 'RUNNING',
+    status: 'PAUSED',
     allocatedCapitalUsdt: 8.18,
     currentCapitalUsdt: 8.18,
     totalProfitUsdt: 0,
     totalProfitPercent: 0,
-    tradesCount: 1,
-    winRate: 91,
+    tradesCount: 0,
+    winRate: 0,
     trailingStopPercent: 0, // SIFIR KAYIP: Zararına satış kapalı!
     takeProfitPercent: 2.8,
-    hasOpenPosition: true,
-    entryPrice: 0.05152,
-    positionQty: 194.0,
+    hasOpenPosition: false,
+    entryPrice: 0,
+    positionQty: 0,
     positionOpenedAt: Date.now() - 3600000,
     createdAt: Date.now() - 86400000 * 3,
-    lastAction: '🛡️ Asla Zararına Satma: NIGHT ($0.05152) kâr hedefine (+%2.8) ulaşana kadar tutuluyor.',
+    lastAction: 'Paper şablonu; başlatılmadı, gerçek pozisyon değildir.',
     lastSignal: 'HOLD'
   }
 ];
@@ -170,7 +171,9 @@ export function loadSecuritySettings(): UserSecuritySettings {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (!data) return defaultSettings;
-    const parsed = JSON.parse(data);
+    const parsed = safeSettings(JSON.parse(data));
+    // Scrub legacy plaintext secrets before returning any settings.
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
     const res = { ...defaultSettings, ...parsed };
     // Clear out stale hardcoded placeholders so real Binance balance can take effect
     if (res.liveSpotBalanceUsdt === 0.84 || res.liveSpotBalanceUsdt === 58.53 || res.liveSpotBalanceUsdt === 57.73) {
@@ -191,7 +194,7 @@ export function loadSecuritySettings(): UserSecuritySettings {
 
 export function saveSecuritySettings(settings: UserSecuritySettings) {
   try {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(safeSettings(settings as unknown as Record<string, unknown>)));
   } catch (err) {
     console.error('Failed to save settings:', err);
   }
@@ -323,3 +326,4 @@ export function createBackupSnapshot(passphrase: string) {
     sizeBytes: jsonStr.length,
   };
 }
+

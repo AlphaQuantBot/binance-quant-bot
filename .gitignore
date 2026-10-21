@@ -14,3 +14,24 @@ coverage/
 *.tgz
 *.zip
 
+
+
+.server_credentials.enc
+.server_credentials.enc.*.tmp
+
+.order_journal.json*
+
+.testnet_order_journal.json*
+
+.testnet_capital_journal.json*
+
+.testnet_equity_history.json*
+
+.testnet_history_recovery.json*
+
+.testnet_monitor_state.json*
+.testnet_monitor_equity.json*
+
+.testnet_monitor_intervals.json*
+
+.testnet_scoped/
