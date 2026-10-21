@@ -4,8 +4,9 @@ export type PriceReference = {kind:'REFERENCE_PRICE'|'AVERAGE_PRICE'|'LAST_TRADE
 export type ReferenceFailureStage='STARTUP_WARMUP'|'INITIAL_STREAM_READ'|'POST_BOOK_SNAPSHOT'|'CONTEXT_REFERENCE_VALIDATION';
 export type ReferenceFailurePhase='ACCOUNT_OBSERVATION'|'CANDIDATE_REVIEW';
 const freshnessEventTimes=new WeakMap<Error,number>();
+export type ReferenceWaitDiagnostics={waitLimitMs:number;requiredMaxEventAgeMs:number;waitElapsedMs:number|null;messagesDuringWait:number;referenceEventsDuringWait:number;bestNewEventMaxAgeMs:number|null};
 export class ReferencePriceFreshnessError extends Error {
- readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null;serverEventAgeMinMs?:number;serverEventAgeMaxMs?:number;stage?:ReferenceFailureStage;phase?:ReferenceFailurePhase;clockUncertaintyMs?:number;bookReadElapsedMs?:number|null;initialServerEventAgeMaxMs?:number;referenceEventAdvanceMs?:number|null};
+ readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null;serverEventAgeMinMs?:number;serverEventAgeMaxMs?:number;stage?:ReferenceFailureStage;phase?:ReferenceFailurePhase;clockUncertaintyMs?:number;bookReadElapsedMs?:number|null;initialServerEventAgeMaxMs?:number;referenceEventAdvanceMs?:number|null;streamWait?:ReferenceWaitDiagnostics};
  constructor(reference:PriceReference,now:number){
   super('STALE_REFERENCE_PRICE');freshnessEventTimes.set(this,reference.timestamp);
   const age=(timestamp:number)=>Number.isSafeInteger(now)&&Number.isSafeInteger(timestamp)&&Number.isSafeInteger(now-timestamp)?now-timestamp:null;

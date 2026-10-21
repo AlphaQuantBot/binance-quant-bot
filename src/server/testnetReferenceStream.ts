@@ -1,13 +1,13 @@
 import {referenceEventAges,type ReferenceClockEvidence} from './referenceClock';
 import {units} from './exactDecimal';
-import {referenceForFilter,ReferencePriceFreshnessError,type PriceReference} from './priceReference';
+import {referenceForFilter,ReferencePriceFreshnessError,type PriceReference,type ReferenceWaitDiagnostics} from './priceReference';
 type Socket=Pick<WebSocket,'addEventListener'|'removeEventListener'|'close'>;
-export type ReferenceStreamDiagnostics={opened:boolean;messages:number;referenceEvents:number;nullPrices:number;nonNullPrices:number;waitLimitMs:number;waitPhase?:'STARTUP';requiredMaxEventAgeMs?:number};
+export type ReferenceStreamDiagnostics={opened:boolean;messages:number;referenceEvents:number;nullPrices:number;nonNullPrices:number;waitLimitMs:number;waitPhase?:'STARTUP';requiredMaxEventAgeMs?:number;streamWait?:ReferenceWaitDiagnostics};
 export class ReferenceStreamTimeoutError extends Error{
  readonly streamDiagnostics:ReferenceStreamDiagnostics;
  constructor(diagnostics:ReferenceStreamDiagnostics){
   super('STREAM_REFERENCE_TIMEOUT');
-  this.streamDiagnostics={opened:diagnostics.opened,messages:diagnostics.messages,referenceEvents:diagnostics.referenceEvents,
+  this.streamDiagnostics={...(diagnostics.streamWait?{streamWait:{...diagnostics.streamWait}}:{}),opened:diagnostics.opened,messages:diagnostics.messages,referenceEvents:diagnostics.referenceEvents,
    nullPrices:diagnostics.nullPrices,nonNullPrices:diagnostics.nonNullPrices,waitLimitMs:diagnostics.waitLimitMs,...(diagnostics.waitPhase?{waitPhase:diagnostics.waitPhase}:{}),...(diagnostics.requiredMaxEventAgeMs!==undefined?{requiredMaxEventAgeMs:diagnostics.requiredMaxEventAgeMs}:{})};
  }
 }
@@ -17,7 +17,7 @@ export class TestnetReferenceStream {
  private startupComplete=false;
  private opened=()=>{this.diagnostics.opened=true;};
  private socket:Socket;private latest?:PriceReference;private failure?:Error;private lastAgeError?:ReferencePriceFreshnessError;private closed=false;
- private waiter?:{resolve:(r:PriceReference)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>;maxEventAgeMs:number};
+ private waiter?:{resolve:(r:PriceReference)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>;maxEventAgeMs:number;startedAt:number;initialMessages:number;initialEvents:number;bestNewEventMaxAgeMs:number|null};
  constructor(private symbol:string,private now:()=>number=Date.now,createSocket:(url:string)=>Socket=url=>new WebSocket(url),private referenceClock?:()=>ReferenceClockEvidence){
   if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
   this.socket=createSocket('wss://stream.testnet.binance.vision/ws/'+symbol.toLowerCase()+'@referencePrice');
@@ -29,9 +29,11 @@ export class TestnetReferenceStream {
  private fresh(maxEventAgeMs=2000){
   if(!this.latest)return false;
   if(this.referenceClock)this.latest.referenceClock=this.referenceClock();
-  try{const now=this.now();referenceForFilter(this.latest,{avgPriceMins:0},now);this.lastAgeError=undefined;
-   const oldest=this.latest.referenceClock?referenceEventAges(this.latest.timestamp,now,this.latest.referenceClock).oldest:now-this.latest.timestamp;
-   return oldest<=maxEventAgeMs;}
+  try{const now=this.now();
+   const ages=this.latest.referenceClock?referenceEventAges(this.latest.timestamp,now,this.latest.referenceClock):{youngest:now-this.latest.timestamp,oldest:now-this.latest.timestamp};
+   if(this.waiter&&ages.youngest>=0&&Number.isSafeInteger(ages.oldest))this.waiter.bestNewEventMaxAgeMs=Math.min(this.waiter.bestNewEventMaxAgeMs??Infinity,ages.oldest);
+   referenceForFilter(this.latest,{avgPriceMins:0},now);this.lastAgeError=undefined;
+   return ages.oldest<=maxEventAgeMs;}
   catch(e){if(e instanceof ReferencePriceFreshnessError)this.lastAgeError=e;return false;}
  }
  private message=(event:Event)=>{
@@ -91,8 +93,18 @@ export class TestnetReferenceStream {
   if(this.fresh(maxEventAgeMs))return structuredClone(this.latest!);
   if(this.waiter)throw Error('STREAM_REFERENCE_READER_BUSY');
   return new Promise((resolve,reject)=>{
-   const timer=setTimeout(()=>{this.waiter=undefined;reject(this.lastAgeError??new ReferenceStreamTimeoutError({...this.diagnostics,waitLimitMs,...(waitPhase?{waitPhase}:{}),...(maxEventAgeMs<2000?{requiredMaxEventAgeMs:maxEventAgeMs}:{})}));},waitLimitMs);
-   this.waiter={resolve,reject,timer,maxEventAgeMs};
+   const timer=setTimeout(()=>{
+    const w=this.waiter;this.waiter=undefined;
+    let streamWait:ReferenceWaitDiagnostics|undefined;
+    if(w&&maxEventAgeMs<2000){
+     const elapsed=performance.now()-w.startedAt;
+     streamWait={waitLimitMs,requiredMaxEventAgeMs:maxEventAgeMs,waitElapsedMs:Number.isFinite(elapsed)&&elapsed>=0?elapsed:null,
+      messagesDuringWait:this.diagnostics.messages-w.initialMessages,referenceEventsDuringWait:this.diagnostics.referenceEvents-w.initialEvents,bestNewEventMaxAgeMs:w.bestNewEventMaxAgeMs};
+    }
+    if(this.lastAgeError){if(streamWait)this.lastAgeError.timing.streamWait=streamWait;reject(this.lastAgeError);}
+    else reject(new ReferenceStreamTimeoutError({...this.diagnostics,waitLimitMs,...(waitPhase?{waitPhase}:{}),...(maxEventAgeMs<2000?{requiredMaxEventAgeMs:maxEventAgeMs}:{}),...(streamWait?{streamWait}:{})}));
+   },waitLimitMs);
+   this.waiter={resolve,reject,timer,maxEventAgeMs,startedAt:performance.now(),initialMessages:this.diagnostics.messages,initialEvents:this.diagnostics.referenceEvents,bestNewEventMaxAgeMs:null};
   });
  }
  close(){
