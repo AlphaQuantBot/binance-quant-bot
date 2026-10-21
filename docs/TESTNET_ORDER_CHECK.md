@@ -128,3 +128,12 @@ Windows order-check using the stream remains pending.
 The host's separate public stream probe received no qualifying event within the
 four-second wait and returned STREAM_REFERENCE_TIMEOUT (no account keys used).
 This is an unconfirmed real stream result, separate from passing fixtures.
+
+## Local scoped accounting foundation after actual order-check PASS
+
+Operator 2056c9b run passed exchange order validation using TESTNET_WEBSOCKET.
+The next implementation is the SQLite-backed local experiment allocation,
+fill/native-fee accounting, persistent observed-loss latch and query-only recovery.
+See TESTNET_SCOPED_CAPITAL.md for commands and limitations. This is a separate
+local accounting scope, not fabricated full-account equity or a matching-engine
+sender. Windows persistence/reopening must be confirmed with sandbox-init/status.

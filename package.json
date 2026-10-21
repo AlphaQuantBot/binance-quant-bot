@@ -26,7 +26,10 @@
     "testnet:watch": "node --import tsx scripts/watch_testnet_account.ts",
     "testnet:preflight": "node --import tsx scripts/preflight_testnet.ts",
     "testnet:valuation-diagnostics": "node --import tsx scripts/diagnose_testnet_valuation.ts",
-    "testnet:order-check": "node --import tsx scripts/check_testnet_order.ts"
+    "testnet:order-check": "node --import tsx scripts/check_testnet_order.ts",
+    "testnet:sandbox-init": "node --import tsx scripts/scoped_testnet_capital.ts init",
+    "testnet:sandbox-status": "node --import tsx scripts/scoped_testnet_capital.ts status",
+    "testnet:sandbox-halt": "node --import tsx scripts/scoped_testnet_capital.ts halt"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
