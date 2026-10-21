@@ -37,7 +37,8 @@
     "testnet:decision-watch": "node --import tsx scripts/watch_scoped_decisions.ts",
     "testnet:decision-history": "node --import tsx scripts/read_decision_history.ts",
     "testnet:decision-analysis": "node --import tsx scripts/analyze_decision_history.ts",
-    "testnet:strategy-backtest": "node --import tsx scripts/backtest_ema_cross.ts"
+    "testnet:strategy-backtest": "node --import tsx scripts/backtest_ema_cross.ts",
+    "testnet:strategy-compare": "node --import tsx scripts/compare_backtest_costs.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

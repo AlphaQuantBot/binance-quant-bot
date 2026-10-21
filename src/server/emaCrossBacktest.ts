@@ -8,7 +8,8 @@ export type BacktestCosts={feeBps:number;slippageBps:number};
 export function validateBacktestCosts(costs:BacktestCosts){
  if(!costs||![costs.feeBps,costs.slippageBps].every(n=>Number.isInteger(n)&&n>=0&&n<=1000))throw Error('BACKTEST_COST_ASSUMPTIONS_REQUIRED');
 }
-export async function readBacktestCandles(fetcher:typeof fetch=fetch,monotonicNow:()=>number=()=>performance.now()){
+export async function readBacktestCandles(fetcher:typeof fetch=fetch,monotonicNow:()=>number=()=>performance.now(),requestedEndTime?:number){
+ if(requestedEndTime!==undefined&&(!Number.isSafeInteger(requestedEndTime)||requestedEndTime<=0||requestedEndTime%60000!==59999))throw Error('BACKTEST_WINDOW_INVALID');
  const started=monotonicNow();
  async function get(resource:string){
   let response:Response;try{response=await fetcher('https://testnet.binance.vision/api/v3/'+resource,{method:'GET',redirect:'error',signal:AbortSignal.timeout(12000)});}catch{throw Error('BACKTEST_READ_FAILED');}
@@ -17,12 +18,13 @@ export async function readBacktestCandles(fetcher:typeof fetch=fetch,monotonicNo
  }
  const clock=await get('time');
  if(!Number.isSafeInteger(clock?.serverTime)||clock.serverTime<=0)throw Error('BACKTEST_CLOCK_INVALID');
- const endTime=Math.floor(clock.serverTime/60000)*60000-1;
+ const latestClose=Math.floor(clock.serverTime/60000)*60000-1,endTime=requestedEndTime??latestClose;
+ if(endTime>latestClose)throw Error('BACKTEST_WINDOW_INVALID');
  const raw=await get('klines?symbol=BTCUSDT&interval=1m&limit=1000&endTime='+endTime);
  const elapsed=monotonicNow()-started;
  if(!Number.isFinite(elapsed)||elapsed<0||elapsed>15000)throw Error('BACKTEST_READ_STALE');
  if(!Array.isArray(raw)||raw.length!==1000)throw Error('BACKTEST_CANDLES_INVALID');
- return {raw,serverTime:clock.serverTime};
+ return {raw,serverTime:clock.serverTime,evaluationTime:endTime+1};
 }
 /** Isolated research model. No journal, holdings, exchange filters or execution capability. */
 export function backtestEmaCross(raw:unknown,serverTime:number,costs:BacktestCosts){

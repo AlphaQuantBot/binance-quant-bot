@@ -38,3 +38,6 @@ coverage/
 
 # Authoritative Windows snapshots and SQLite WAL/SHM files
 *.durable/
+
+# Frozen public research datasets
+.testnet_backtests/
