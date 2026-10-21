@@ -1,7 +1,7 @@
 import {normalizeValuationMarks,type ValuationMark} from './valuationMarks';
 import {backfillTrades,type TradeHistoryWindow} from './tradeBackfill';
 import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
-import { referenceForFilter, ReferencePriceFreshnessError, type PriceReference } from './priceReference';
+import { referenceForFilter, ReferencePriceFreshnessError, annotateReferenceFailure, type PriceReference } from './priceReference';
 import { validateTradeContext, type TradeContext } from './tradingRules';
 import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
 import { createHash, createHmac } from 'node:crypto';
@@ -108,7 +108,7 @@ export function createBinanceTestnetAdapter(options: {
       const referencePromise=(async()=>{
       let reference:PriceReference|undefined;
       if(percent.length&&options.referenceReader){
-        const streamed=await options.referenceReader(symbol);
+        const streamed=await options.referenceReader(symbol).catch(error=>{throw annotateReferenceFailure(error,'INITIAL_STREAM_READ');});
         if(streamed.kind!=='REFERENCE_PRICE')throw Error('STREAM_REFERENCE_INVALID');
         return streamed;
       }
@@ -142,7 +142,8 @@ export function createBinanceTestnetAdapter(options: {
       // A supplied snapshot is synchronous: select the feed's latest real event
       // after the book read without another HTTP request, stream wait or fallback.
       if(percent.length&&options.referenceReader&&options.referenceSnapshot){
-        const cached=options.referenceSnapshot(symbol);
+        let cached:PriceReference;
+        try{cached=options.referenceSnapshot(symbol);}catch(error){throw annotateReferenceFailure(error,'POST_BOOK_SNAPSHOT');}
         if(cached.kind!=='REFERENCE_PRICE')throw Error('STREAM_REFERENCE_INVALID');
         if(reference&&(cached.timestamp<reference.timestamp||cached.timestamp===reference.timestamp&&cached.price!==reference.price))throw Error('STREAM_REFERENCE_REGRESSED');
         reference=cached;
@@ -150,9 +151,9 @@ export function createBinanceTestnetAdapter(options: {
       const q=object(book);
       if(q.symbol!==symbol)throw Error('BOOK_SYMBOL_MISMATCH');
       const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
-      validateTradeContext(context,symbol,now());
-      try{for(const filter of percent)referenceForFilter(reference,filter,now());}
+      try{validateTradeContext(context,symbol,now());for(const filter of percent)referenceForFilter(reference,filter,now());}
       catch(error){
+        if(options.referenceReader)annotateReferenceFailure(error,'CONTEXT_REFERENCE_VALIDATION');
         // Only a successful, valid but event-old reference gets one fresh read.
         // Never retry transport/HTTP errors, future timestamps or slow requests.
         if(options.referenceReader||!(error instanceof ReferencePriceFreshnessError)||reference?.kind!=='REFERENCE_PRICE'||error.timing.requestAgeMs===null||error.timing.requestAgeMs<0||error.timing.requestAgeMs>2000||error.timing.eventAgeMs===null||error.timing.eventAgeMs<=2000||units(reference.price)<=0n)throw error;

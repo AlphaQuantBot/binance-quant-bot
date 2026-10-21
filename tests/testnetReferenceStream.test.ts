@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {TestnetReferenceStream,ReferenceStreamTimeoutError} from '../src/server/testnetReferenceStream';
-import {ReferencePriceFreshnessError} from '../src/server/priceReference';
+import {ReferencePriceFreshnessError,annotateReferenceFailure} from '../src/server/priceReference';
 import {createBinanceTestnetAdapter} from '../src/server/binanceTestnetAdapter';
 class FakeSocket extends EventTarget{closes=0;close(){this.closes++;}emit(value:unknown){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(value)}));}}
 const event=(t=1000,r:string|null='100')=>({e:'referencePrice',s:'BTCUSDT',r,t});
@@ -99,4 +99,38 @@ test('timeout diagnostic snapshot retains prior nonnull count after an explicit 
   });
   t.mock.timers.tick(4000);await rejected;
  }finally{f.feed.close();}
+});
+
+test('stream freshness failure identifies first read, post-book snapshot or final validation without more requests',async()=>{
+ for(const stage of ['INITIAL_STREAM_READ','POST_BOOK_SNAPSHOT','CONTEXT_REFERENCE_VALIDATION'] as const){
+  const paths:string[]=[];
+  const old={kind:'REFERENCE_PRICE' as const,price:'100',timestamp:2000,observedAt:4999};
+  const fresh={...old,timestamp:4990};
+  const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>5000,
+   referenceReader:async()=>{
+    if(stage==='INITIAL_STREAM_READ')throw new ReferencePriceFreshnessError(old,5000);
+    return stage==='CONTEXT_REFERENCE_VALIDATION'?old:fresh;
+   },
+   ...(stage==='POST_BOOK_SNAPSHOT'?{referenceSnapshot:()=>{throw new ReferencePriceFreshnessError(old,5000);}}:{}),
+   fetcher:async url=>{
+    const p=new URL(String(url)).pathname;paths.push(p);
+    return new Response(JSON.stringify(p.endsWith('exchangeInfo')?
+     {symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[{filterType:'PERCENT_PRICE',avgPriceMins:5}]}],exchangeFilters:[]}:
+     {symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'1',askQty:'1'}));
+   }});
+  await assert.rejects(a.tradeContext('BTCUSDT'),(error:unknown)=>{
+   assert.ok(error instanceof ReferencePriceFreshnessError);assert.equal(error.timing.stage,stage);
+   assert.equal(error.timing.eventAgeMs,3000);assert.equal(error.timing.requestAgeMs,1);return true;
+  });
+  assert.deepEqual(paths,stage==='INITIAL_STREAM_READ'?['/api/v3/exchangeInfo']:['/api/v3/exchangeInfo','/api/v3/ticker/bookTicker']);
+ }
+});
+test('observation phase annotation preserves the original stage and ages and ignores untyped errors',()=>{
+ const error=new ReferencePriceFreshnessError({kind:'REFERENCE_PRICE',price:'100',timestamp:1000,observedAt:2900},3100);
+ annotateReferenceFailure(error,'POST_BOOK_SNAPSHOT');
+ assert.equal(annotateReferenceFailure(error,undefined,'CANDIDATE_REVIEW'),error);
+ annotateReferenceFailure(error,'CONTEXT_REFERENCE_VALIDATION','ACCOUNT_OBSERVATION');
+ assert.deepEqual(error.timing,{referenceKind:'REFERENCE_PRICE',requestAgeMs:200,eventAgeMs:2100,stage:'POST_BOOK_SNAPSHOT',phase:'CANDIDATE_REVIEW'});
+ const plain=Error('fixture');assert.equal(annotateReferenceFailure(plain,'INITIAL_STREAM_READ'),plain);
+ assert.equal('timing' in plain,false);
 });

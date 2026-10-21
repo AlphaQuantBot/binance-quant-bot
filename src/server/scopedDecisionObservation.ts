@@ -1,3 +1,4 @@
+import {annotateReferenceFailure,type ReferenceFailurePhase} from './priceReference';
 import type {DecisionReferenceSession} from './decisionReferenceSession';
 import {measuredReferenceClock} from './referenceClock';
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
  const accountId=testnetAccountId(apiKey);
  abortSignal?.throwIfAborted();
  const fetcher:typeof fetch=(url,init)=>fetch(url,{...init,signal:abortSignal?AbortSignal.any([abortSignal,...(init?.signal?[init.signal]:[])]):init?.signal});
+ let phase:ReferenceFailurePhase='ACCOUNT_OBSERVATION';
  let stream:TestnetReferenceStream|undefined,journal:ScopedTestnetJournal|undefined;
  const shutdown=()=>stream?.close();abortSignal?.addEventListener('abort',shutdown,{once:true});
  try{
@@ -33,6 +35,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
    buyOnceUsed:!!journal.find('sandbox_first_buy_v1'),sellOnceUsed:!!journal.find('sandbox_first_sell_v1')},Date.now());
   let reviewed:ReturnType<typeof reviewScopedSignalCandidate>|undefined;
   if(decision.assessment==='CANDIDATE_ONLY'){
+   phase='CANDIDATE_REVIEW';
    // Refresh quote/reference and read actual commissions concurrently; HOLD never forces an order review.
    const reviewReader={tradeContext:exchange.tradeContext,commissionRates:exchange.commissionRates};
    const [currentContext,commission]=await Promise.all([reviewReader.tradeContext('BTCUSDT'),reviewReader.commissionRates('BTCUSDT')]);
@@ -45,7 +48,8 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
    exchangeValidated:false,capitalReserved:false,feeReservationAuthorized:false,executionAuthorized:false}};
   abortSignal?.throwIfAborted();
   return {report:{...report,recovery},serverTime:sample.serverTime,clockReceivedAt:sample.clockReceivedAt};
- }finally{abortSignal?.removeEventListener('abort',shutdown);if(!referenceSession)stream?.close();journal?.close();}
+ }catch(error){throw annotateReferenceFailure(error,undefined,phase);}
+ finally{abortSignal?.removeEventListener('abort',shutdown);if(!referenceSession)stream?.close();journal?.close();}
 }
 export function decisionObservationErrorCode(error:unknown){
  const allowed=['SCOPED_NOT_INITIALIZED','SCOPED_RECONCILIATION_REQUIRED','SCOPED_STATE_INVALID','INVALID_TESTNET_CREDENTIALS',

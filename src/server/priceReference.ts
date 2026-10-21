@@ -1,8 +1,10 @@
 import {referenceEventAges,type ReferenceClockEvidence} from './referenceClock';
 import { units } from './exactDecimal';
 export type PriceReference = {kind:'REFERENCE_PRICE'|'AVERAGE_PRICE'|'LAST_TRADE';price:string;observedAt:number;timestamp:number;avgPriceMins?:number;absenceConfirmed?:boolean;referenceClock?:ReferenceClockEvidence};
+export type ReferenceFailureStage='INITIAL_STREAM_READ'|'POST_BOOK_SNAPSHOT'|'CONTEXT_REFERENCE_VALIDATION';
+export type ReferenceFailurePhase='ACCOUNT_OBSERVATION'|'CANDIDATE_REVIEW';
 export class ReferencePriceFreshnessError extends Error {
- readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null;serverEventAgeMinMs?:number;serverEventAgeMaxMs?:number};
+ readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null;serverEventAgeMinMs?:number;serverEventAgeMaxMs?:number;stage?:ReferenceFailureStage;phase?:ReferenceFailurePhase};
  constructor(reference:PriceReference,now:number){
   super('STALE_REFERENCE_PRICE');
   const age=(timestamp:number)=>Number.isSafeInteger(now)&&Number.isSafeInteger(timestamp)&&Number.isSafeInteger(now-timestamp)?now-timestamp:null;
@@ -27,4 +29,13 @@ export function validatePercentPrice(price:bigint,side:'BUY'|'SELL',filter:any,r
   const upper=units(filter.filterType==='PERCENT_PRICE'?filter.multiplierUp:side==='BUY'?filter.bidMultiplierUp:filter.askMultiplierUp);
   if(lower<=0n||upper<lower)throw Error('INVALID_PERCENT_MULTIPLIERS');
   if(price*10n**18n<ref*lower||price*10n**18n>ref*upper)throw Error('PERCENT_PRICE_REJECTED');
+}
+
+/** Only typed freshness errors receive fixed diagnostic labels; preserve original ages. */
+export function annotateReferenceFailure(error:unknown,stage?:ReferenceFailureStage,phase?:ReferenceFailurePhase){
+ if(error instanceof ReferencePriceFreshnessError){
+  if(stage&&error.timing.stage===undefined)error.timing.stage=stage;
+  if(phase&&error.timing.phase===undefined)error.timing.phase=phase;
+ }
+ return error;
 }
