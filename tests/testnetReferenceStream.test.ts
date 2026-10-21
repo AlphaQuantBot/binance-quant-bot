@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {TestnetReferenceStream} from '../src/server/testnetReferenceStream';
+import {TestnetReferenceStream,ReferenceStreamTimeoutError} from '../src/server/testnetReferenceStream';
 import {ReferencePriceFreshnessError} from '../src/server/priceReference';
 import {createBinanceTestnetAdapter} from '../src/server/binanceTestnetAdapter';
 class FakeSocket extends EventTarget{closes=0;close(){this.closes++;}emit(value:unknown){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(value)}));}}
@@ -66,4 +66,37 @@ test('post-book stale, cleared, future or disconnected cache fails without REST 
   }finally{f.feed.close();}
  }
  assert.throws(()=>createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',referenceSnapshot:()=>({kind:'REFERENCE_PRICE',price:'1',timestamp:1,observedAt:1})}),/CONFIGURATION_INVALID/);
+});
+
+test('timeout distinguishes unopened, open without messages and null-only reference streams',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ for(const mode of ['unopened','silent','null']){
+  const f=setup();
+  try{
+   if(mode!=='unopened')f.socket.dispatchEvent(new Event('open'));
+   const p=f.feed.read('BTCUSDT');
+   if(mode==='null')f.socket.emit(event(1001,null));
+   const rejected=assert.rejects(p,(e:unknown)=>{
+    assert.ok(e instanceof ReferenceStreamTimeoutError);
+    assert.deepEqual(e.streamDiagnostics,{opened:mode!=='unopened',messages:mode==='null'?1:0,
+     referenceEvents:mode==='null'?1:0,nullPrices:mode==='null'?1:0,nonNullPrices:0,waitLimitMs:4000});
+    assert.ok(!JSON.stringify(e).includes('price":'));
+    return true;
+   });
+   t.mock.timers.tick(3999);await Promise.resolve();
+   t.mock.timers.tick(1);await rejected;
+  }finally{f.feed.close();}
+ }
+});
+test('timeout diagnostic snapshot retains prior nonnull count after an explicit null clears price',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const f=setup();
+ try{
+  f.socket.dispatchEvent(new Event('open'));f.socket.emit(event());f.socket.emit(event(1001,null));
+  const p=f.feed.read('BTCUSDT');
+  const rejected=assert.rejects(p,(e:unknown)=>{
+   assert.ok(e instanceof ReferenceStreamTimeoutError);assert.equal(e.streamDiagnostics.nonNullPrices,1);
+   assert.equal(e.streamDiagnostics.nullPrices,1);assert.equal(e.streamDiagnostics.messages,2);return true;
+  });
+  t.mock.timers.tick(4000);await rejected;
+ }finally{f.feed.close();}
 });

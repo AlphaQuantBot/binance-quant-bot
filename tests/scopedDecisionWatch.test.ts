@@ -1,3 +1,4 @@
+import {ReferenceStreamTimeoutError} from '../src/server/testnetReferenceStream';
 import {ReferencePriceFreshnessError} from '../src/server/priceReference';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -66,4 +67,21 @@ test('stale-reference stop summary retains only safe numeric freshness diagnosti
  assert.equal(s.state,'STOPPED');assert.equal(s.stopCode,'STALE_REFERENCE_PRICE');
  assert.deepEqual(s.referenceTiming,{referenceKind:'REFERENCE_PRICE',requestAgeMs:200,eventAgeMs:2100});
  assert.equal(s.completedCycles,0);assert.equal(f.waits.length,0);assert.ok(!JSON.stringify(s).includes('"price"'));
+});
+
+test('timeout summary retains partial cycles and allowlisted stream counts without another attempt',async()=>{
+ const f=fixture(),read=f.deps.observe;let attempts=0;
+ const counts={opened:true,messages:2,referenceEvents:2,nullPrices:2,nonNullPrices:0,waitLimitMs:4000};
+ f.deps.observe=async()=>{if(++attempts===3)throw new ReferenceStreamTimeoutError({...counts,privatePayload:'secret'} as typeof counts);return read();};
+ f.deps.errorCode=()=> 'STREAM_REFERENCE_TIMEOUT';
+ const s=await runDecisionWatch(3,f.deps,f.stop.signal);
+ assert.equal(s.state,'STOPPED');assert.equal(s.stopCode,'STREAM_REFERENCE_TIMEOUT');
+ assert.equal(s.completedCycles,2);assert.equal(s.attemptedCycles,3);assert.equal(attempts,3);
+ assert.deepEqual(s.streamDiagnostics,counts);assert.equal(s.ordersSubmitted,0);
+ assert.ok(!JSON.stringify(s).includes('secret'));assert.ok(!JSON.stringify(s).includes('privatePayload'));
+});
+test('arbitrary thrown objects cannot inject stream diagnostics into the summary',async()=>{
+ const f=fixture();f.deps.observe=async()=>{throw {streamDiagnostics:{privatePayload:'secret'}};};
+ const s=await runDecisionWatch(3,f.deps,f.stop.signal);
+ assert.equal(s.streamDiagnostics,undefined);assert.ok(!JSON.stringify(s).includes('secret'));
 });

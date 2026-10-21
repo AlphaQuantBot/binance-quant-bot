@@ -2,13 +2,25 @@ import type {ReferenceClockEvidence} from './referenceClock';
 import {units} from './exactDecimal';
 import {referenceForFilter,ReferencePriceFreshnessError,type PriceReference} from './priceReference';
 type Socket=Pick<WebSocket,'addEventListener'|'removeEventListener'|'close'>;
+export type ReferenceStreamDiagnostics={opened:boolean;messages:number;referenceEvents:number;nullPrices:number;nonNullPrices:number;waitLimitMs:number};
+export class ReferenceStreamTimeoutError extends Error{
+ readonly streamDiagnostics:ReferenceStreamDiagnostics;
+ constructor(diagnostics:ReferenceStreamDiagnostics){
+  super('STREAM_REFERENCE_TIMEOUT');
+  this.streamDiagnostics={opened:diagnostics.opened,messages:diagnostics.messages,referenceEvents:diagnostics.referenceEvents,
+   nullPrices:diagnostics.nullPrices,nonNullPrices:diagnostics.nonNullPrices,waitLimitMs:diagnostics.waitLimitMs};
+ }
+}
 /** One public, fixed-testnet subscription. No credentials, reconnects or order capabilities. */
 export class TestnetReferenceStream {
+ private diagnostics:ReferenceStreamDiagnostics={opened:false,messages:0,referenceEvents:0,nullPrices:0,nonNullPrices:0,waitLimitMs:4000};
+ private opened=()=>{this.diagnostics.opened=true;};
  private socket:Socket;private latest?:PriceReference;private failure?:Error;private lastAgeError?:ReferencePriceFreshnessError;private closed=false;
  private waiter?:{resolve:(r:PriceReference)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>};
  constructor(private symbol:string,private now:()=>number=Date.now,createSocket:(url:string)=>Socket=url=>new WebSocket(url),private referenceClock?:()=>ReferenceClockEvidence){
   if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
   this.socket=createSocket('wss://stream.testnet.binance.vision/ws/'+symbol.toLowerCase()+'@referencePrice');
+  this.socket.addEventListener('open',this.opened);
   this.socket.addEventListener('message',this.message);
   this.socket.addEventListener('error',this.error);
   this.socket.addEventListener('close',this.disconnected);
@@ -21,14 +33,17 @@ export class TestnetReferenceStream {
  }
  private message=(event:Event)=>{
   if(this.closed||this.failure)return;
+  this.diagnostics.messages++;
   try{
    const data=(event as MessageEvent).data;
    if(typeof data!=='string'||data.length>8192)throw Error('STREAM_REFERENCE_INVALID');
    const r=JSON.parse(data);
    if(r?.e==='serverShutdown')throw Error('STREAM_REFERENCE_DISCONNECTED');
    if(!r||r.e!=='referencePrice'||r.s!==this.symbol||!Number.isSafeInteger(r.t)||r.t<=0)throw Error('STREAM_REFERENCE_INVALID');
-   if(r.r===null){this.latest=undefined;this.lastAgeError=undefined;return;}
+   this.diagnostics.referenceEvents++;
+   if(r.r===null){this.diagnostics.nullPrices++;this.latest=undefined;this.lastAgeError=undefined;return;}
    if(typeof r.r!=='string'||units(r.r)<=0n)throw Error('STREAM_REFERENCE_INVALID');
+   this.diagnostics.nonNullPrices++;
    if(this.latest&&(r.t<this.latest.timestamp||r.t===this.latest.timestamp&&r.r!==this.latest.price))throw Error('STREAM_REFERENCE_REGRESSED');
    this.latest={kind:'REFERENCE_PRICE',price:r.r,timestamp:r.t,observedAt:this.now(),...(this.referenceClock?{referenceClock:this.referenceClock()}: {})};
    if(this.fresh()&&this.waiter){const w=this.waiter;this.waiter=undefined;clearTimeout(w.timer);w.resolve(structuredClone(this.latest));}
@@ -57,13 +72,14 @@ export class TestnetReferenceStream {
   if(this.fresh())return structuredClone(this.latest!);
   if(this.waiter)throw Error('STREAM_REFERENCE_READER_BUSY');
   return new Promise((resolve,reject)=>{
-   const timer=setTimeout(()=>{this.waiter=undefined;reject(this.lastAgeError??Error('STREAM_REFERENCE_TIMEOUT'));},4000);
+   const timer=setTimeout(()=>{this.waiter=undefined;reject(this.lastAgeError??new ReferenceStreamTimeoutError(this.diagnostics));},4000);
    this.waiter={resolve,reject,timer};
   });
  }
  close(){
   if(this.closed)return;this.closed=true;
   if(this.waiter){const w=this.waiter;this.waiter=undefined;clearTimeout(w.timer);w.reject(Error('STREAM_REFERENCE_CLOSED'));}
+  this.socket.removeEventListener('open',this.opened);
   this.socket.removeEventListener('message',this.message);this.socket.removeEventListener('error',this.error);this.socket.removeEventListener('close',this.disconnected);this.socket.close();
  }
 }
