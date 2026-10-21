@@ -1,5 +1,11 @@
+export type SignalSessionObservation = {
+ candleCloseTime:number;
+ signal:string;
+ recorded:boolean;
+ missedCandles:number;
+};
 /** Server-minute scheduling; no exchange or order capability. */
-export function nextSignalDelay(serverTime, clockReceivedAt, monotonicNow) {
+export function nextSignalDelay(serverTime:number, clockReceivedAt:number, monotonicNow:number) {
  if (!Number.isSafeInteger(serverTime) || serverTime <= 0 ||
      !Number.isFinite(clockReceivedAt) || clockReceivedAt < 0 ||
      !Number.isFinite(monotonicNow) || monotonicNow < clockReceivedAt) throw Error('SIGNAL_CLOCK_INVALID');
@@ -8,8 +14,8 @@ export function nextSignalDelay(serverTime, clockReceivedAt, monotonicNow) {
  const target = (Math.floor(serverTime / 60000) + 1) * 60000 + 2000;
  return Math.max(0, Math.ceil(target - serverTime - (monotonicNow - clockReceivedAt)));
 }
-export function summarizeSignalSession(observations, requestedCycles, state) {
- const unique = new Map();
+export function summarizeSignalSession(observations:readonly SignalSessionObservation[], requestedCycles:number, state:string) {
+ const unique = new Map<number,SignalSessionObservation>();
  let duplicateObservations = 0;
  for (const observation of observations) {
   if (unique.has(observation.candleCloseTime)) duplicateObservations++;

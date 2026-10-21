@@ -95,3 +95,39 @@ npm.cmd run lint
 ```powershell
 npm.cmd run test:security
 ```
+
+## Windows operatör doğrulaması ve açık engeller
+
+093b5c9 sürümü Windows üzerinde 293 test çalıştırdı: 212 geçti, 81 başarısız.
+Yeni sinyal gözlem/zamanlama testleri ile SQLite deney alım/satım/defter
+testleri geçti. Bu sonuç tam test paketinin başarılı olduğu anlamına gelmez.
+
+Zamanlama modülündeki eksik parametre türleri TS7006 hatası üretti.
+Türler açıkça eklendi: üç saat parametresi number, gözlem listesi tipli,
+benzersiz mum haritası number -> SignalSessionObservation.
+
+Eski JSON defterleri rename sonrasında dizin fd'sine fsync uyguluyor.
+Operatör izlerinde capitalLedger, dailyRiskGate, equityHistory,
+historyRecovery, observedInterval, recoveryMonitor ve orderExecution
+bu aşamada EPERM verdi. SUBMISSION_IN_PROGRESS/EBADF gibi bazı ek hatalar
+aynı yazma hatasından sonraki temizleme aşamalarında görülüyor; ayrı
+doğrulama yapılmadan hepsinin tek kök nedene sahip olduğu varsayılmıyor.
+Vault testi ayrıca POSIX 0600 modunu Windows üzerinde 0666 gördü.
+
+Bu eski yolların Windows kalıcılık ve erişim denetimi desteği çözülmedi.
+Dizin fsync hatası yutulmadı; testler atlanmadı; korumalar kapatılmadı.
+Tam suite başarısız kaldığından otomatik/ana ağ yürütmesi açılmaz.
+Sinyal aracı ayrı SQLite kaydını ve yalnızca halka açık GET çağrılarını
+kullanmayı sürdürür; eski JSON defterlerine bu düzeltme erişmez.
+
+Tür düzeltmesi için önce lint, sonra hedefli sekiz sinyal testi:
+
+```powershell
+npm.cmd run lint
+```
+
+```powershell
+node --import tsx --test tests/testnetSignalObserver.test.ts tests/testnetSignalTiming.test.ts
+```
+
+Bunlar geçerse 10 gözlem alınabilir. Tam 293 testin geçtiği iddia edilmez.
