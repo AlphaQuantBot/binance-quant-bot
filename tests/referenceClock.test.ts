@@ -24,7 +24,9 @@ test('uncertainty must prove both nonfuture and no older than 2000 ms',()=>{
  assert.equal(referenceForFilter(r,{avgPriceMins:0},2000),100n*10n**18n);
  assert.throws(()=>referenceForFilter({...r,timestamp:2300},{avgPriceMins:0},2000),/STALE_REFERENCE_PRICE/);
  assert.throws(()=>referenceForFilter({...r,timestamp:500},{avgPriceMins:0},2000),/STALE_REFERENCE_PRICE/);
- assert.throws(()=>referenceForFilter({...r,observedAt:1},{avgPriceMins:0},2000),/STALE_REFERENCE_PRICE/);
+ // Receipt age is inclusive: 1999 and 2000 ms pass; 2001 ms fails.
+ for(const now of [2000,2001])assert.equal(referenceForFilter({...r,observedAt:1},{avgPriceMins:0},now),100n*10n**18n);
+ assert.throws(()=>referenceForFilter({...r,observedAt:1},{avgPriceMins:0},2002),/STALE_REFERENCE_PRICE/);
  assert.throws(()=>referenceForFilter({...r,referenceClock:undefined},{avgPriceMins:0},2000),/STALE_REFERENCE_PRICE/);
 });
 test('slow, expired, malformed and wall-clock-jumped calibrations fail closed',()=>{
