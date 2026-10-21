@@ -1,3 +1,4 @@
+import type {ReferenceClockEvidence} from './referenceClock';
 import {units} from './exactDecimal';
 import {referenceForFilter,ReferencePriceFreshnessError,type PriceReference} from './priceReference';
 type Socket=Pick<WebSocket,'addEventListener'|'removeEventListener'|'close'>;
@@ -5,7 +6,7 @@ type Socket=Pick<WebSocket,'addEventListener'|'removeEventListener'|'close'>;
 export class TestnetReferenceStream {
  private socket:Socket;private latest?:PriceReference;private failure?:Error;private lastAgeError?:ReferencePriceFreshnessError;private closed=false;
  private waiter?:{resolve:(r:PriceReference)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>};
- constructor(private symbol:string,private now:()=>number=Date.now,createSocket:(url:string)=>Socket=url=>new WebSocket(url)){
+ constructor(private symbol:string,private now:()=>number=Date.now,createSocket:(url:string)=>Socket=url=>new WebSocket(url),private referenceClock?:()=>ReferenceClockEvidence){
   if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
   this.socket=createSocket('wss://stream.testnet.binance.vision/ws/'+symbol.toLowerCase()+'@referencePrice');
   this.socket.addEventListener('message',this.message);
@@ -14,6 +15,7 @@ export class TestnetReferenceStream {
  }
  private fresh(){
   if(!this.latest)return false;
+  if(this.referenceClock)this.latest.referenceClock=this.referenceClock();
   try{referenceForFilter(this.latest,{avgPriceMins:0},this.now());return true;}
   catch(e){if(e instanceof ReferencePriceFreshnessError)this.lastAgeError=e;return false;}
  }
@@ -28,9 +30,9 @@ export class TestnetReferenceStream {
    if(r.r===null){this.latest=undefined;this.lastAgeError=undefined;return;}
    if(typeof r.r!=='string'||units(r.r)<=0n)throw Error('STREAM_REFERENCE_INVALID');
    if(this.latest&&(r.t<this.latest.timestamp||r.t===this.latest.timestamp&&r.r!==this.latest.price))throw Error('STREAM_REFERENCE_REGRESSED');
-   this.latest={kind:'REFERENCE_PRICE',price:r.r,timestamp:r.t,observedAt:this.now()};
+   this.latest={kind:'REFERENCE_PRICE',price:r.r,timestamp:r.t,observedAt:this.now(),...(this.referenceClock?{referenceClock:this.referenceClock()}: {})};
    if(this.fresh()&&this.waiter){const w=this.waiter;this.waiter=undefined;clearTimeout(w.timer);w.resolve(structuredClone(this.latest));}
-  }catch(e){this.fail(e instanceof Error&&['STREAM_REFERENCE_INVALID','STREAM_REFERENCE_DISCONNECTED','STREAM_REFERENCE_REGRESSED'].includes(e.message)?e:Error('STREAM_REFERENCE_INVALID'));}
+  }catch(e){this.fail(e instanceof Error&&['STREAM_REFERENCE_INVALID','STREAM_REFERENCE_DISCONNECTED','STREAM_REFERENCE_REGRESSED','REFERENCE_CLOCK_UNCONFIRMED'].includes(e.message)?e:Error('STREAM_REFERENCE_INVALID'));}
  };
  private error=()=>this.fail(Error('STREAM_REFERENCE_TRANSPORT_UNCONFIRMED'));
  private disconnected=()=>this.fail(Error('STREAM_REFERENCE_DISCONNECTED'));
@@ -45,6 +47,7 @@ export class TestnetReferenceStream {
   if(symbol!==this.symbol)throw Error('STREAM_REFERENCE_SYMBOL_MISMATCH');
   if(this.failure)throw this.failure;if(this.closed)throw Error('STREAM_REFERENCE_CLOSED');
   if(!this.latest)throw Error('STREAM_REFERENCE_UNAVAILABLE');
+  if(this.referenceClock)this.latest.referenceClock=this.referenceClock();
   referenceForFilter(this.latest,{avgPriceMins:0},this.now());
   return structuredClone(this.latest);
  }

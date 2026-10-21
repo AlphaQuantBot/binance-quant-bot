@@ -1,16 +1,19 @@
+import {referenceEventAges,type ReferenceClockEvidence} from './referenceClock';
 import { units } from './exactDecimal';
-export type PriceReference = {kind:'REFERENCE_PRICE'|'AVERAGE_PRICE'|'LAST_TRADE';price:string;observedAt:number;timestamp:number;avgPriceMins?:number;absenceConfirmed?:boolean};
+export type PriceReference = {kind:'REFERENCE_PRICE'|'AVERAGE_PRICE'|'LAST_TRADE';price:string;observedAt:number;timestamp:number;avgPriceMins?:number;absenceConfirmed?:boolean;referenceClock?:ReferenceClockEvidence};
 export class ReferencePriceFreshnessError extends Error {
- readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null};
+ readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null;serverEventAgeMinMs?:number;serverEventAgeMaxMs?:number};
  constructor(reference:PriceReference,now:number){
   super('STALE_REFERENCE_PRICE');
   const age=(timestamp:number)=>Number.isSafeInteger(now)&&Number.isSafeInteger(timestamp)&&Number.isSafeInteger(now-timestamp)?now-timestamp:null;
   this.timing={referenceKind:['REFERENCE_PRICE','AVERAGE_PRICE','LAST_TRADE'].includes(reference.kind)?reference.kind:'UNKNOWN',requestAgeMs:age(reference.observedAt),eventAgeMs:age(reference.timestamp)};
+  if(reference.referenceClock){const ages=referenceEventAges(reference.timestamp,now,reference.referenceClock);this.timing.serverEventAgeMinMs=ages.youngest;this.timing.serverEventAgeMaxMs=ages.oldest;}
  }
 }
 export function referenceForFilter(reference:PriceReference|undefined,filter:any,now:number) {
   if(!reference)throw Error('EXCHANGE_REFERENCE_PRICE_REQUIRED');
-  if(!Number.isSafeInteger(reference.observedAt)||!Number.isSafeInteger(reference.timestamp)||reference.observedAt>now||reference.timestamp>now||reference.observedAt<=0||reference.timestamp<=0||now-reference.observedAt>2000||now-reference.timestamp>2000||units(reference.price)<=0n)throw new ReferencePriceFreshnessError(reference,now);
+  const eventAges=reference.referenceClock?referenceEventAges(reference.timestamp,now,reference.referenceClock):{youngest:now-reference.timestamp,oldest:now-reference.timestamp};
+  if(!Number.isSafeInteger(reference.observedAt)||!Number.isSafeInteger(reference.timestamp)||reference.observedAt>now||eventAges.youngest<0||reference.observedAt<=0||reference.timestamp<=0||now-reference.observedAt>2000||eventAges.oldest>2000||units(reference.price)<=0n)throw new ReferencePriceFreshnessError(reference,now);
   if(!Number.isSafeInteger(filter.avgPriceMins)||filter.avgPriceMins<0)throw Error('INVALID_REFERENCE_WINDOW');
   if(reference.kind==='REFERENCE_PRICE')return units(reference.price);
   if(reference.absenceConfirmed!==true)throw Error('REFERENCE_ABSENCE_UNCONFIRMED');

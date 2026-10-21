@@ -1,3 +1,4 @@
+import {measuredReferenceClock} from './referenceClock';
 import fs from 'node:fs';
 import {ScopedTestnetJournal} from './scopedTestnetJournal';
 import {createBinanceTestnetAdapter,testnetAccountId} from './binanceTestnetAdapter';
@@ -21,7 +22,8 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   if(recovery.unresolved)throw Error('SCOPED_RECONCILIATION_REQUIRED');
   const sample=await readSignalCandles(fetcher);
   const observation=evaluateSignal(sample.raw,sample.serverTime);
-  stream=new TestnetReferenceStream('BTCUSDT');
+  const referenceClock=measuredReferenceClock(sample.serverTime,sample.clockLocalStartedAt,sample.clockLocalReceivedAt,sample.clockStartedAt,sample.clockReceivedAt);
+  stream=new TestnetReferenceStream('BTCUSDT',Date.now,undefined,referenceClock);
   const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.read(s),referenceSnapshot:s=>stream!.snapshot(s)});
   const reader={accountSnapshot:exchange.accountSnapshot,tradeContext:exchange.tradeContext};
   const [account,context]=await Promise.all([reader.accountSnapshot(),reader.tradeContext('BTCUSDT')]);
@@ -48,6 +50,6 @@ export function decisionObservationErrorCode(error:unknown){
  const allowed=['SCOPED_NOT_INITIALIZED','SCOPED_RECONCILIATION_REQUIRED','SCOPED_STATE_INVALID','INVALID_TESTNET_CREDENTIALS',
  'SIGNAL_RATE_LIMITED','SIGNAL_LOCATION_RESTRICTED','SIGNAL_READ_FAILED','SIGNAL_READ_STALE','SIGNAL_CLOCK_INVALID',
  'SIGNAL_CANDLES_INVALID','SIGNAL_CANDLE_TIMING_INVALID','SIGNAL_CANDLES_STALE','ACCOUNT_CHANGED_DURING_READ','ACCOUNT_SNAPSHOT_STALE',
- 'EXCHANGE_LOCATION_RESTRICTED','EXCHANGE_COOLDOWN','STREAM_REFERENCE_TIMEOUT','STREAM_REFERENCE_DISCONNECTED','STALE_REFERENCE_PRICE'];
+ 'REFERENCE_CLOCK_UNCONFIRMED','EXCHANGE_LOCATION_RESTRICTED','EXCHANGE_COOLDOWN','STREAM_REFERENCE_TIMEOUT','STREAM_REFERENCE_DISCONNECTED','STALE_REFERENCE_PRICE'];
  return error instanceof Error&&allowed.includes(error.message)?error.message:'DECISION_OBSERVATION_UNCONFIRMED';
 }
