@@ -1,3 +1,4 @@
+import {removeSnapshotFixtureCompanion} from './fixtures/durableSnapshot';
 import { rulesFixture, policyFixture, dailyEvidenceFixture } from './fixtures/trading';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -87,7 +88,7 @@ test('orphan reservation between journal writes cannot be resumed into a new sub
  try{assert.equal((await s.engine.refresh()).ready,false);await assert.rejects(s.engine.submit(intent,plan),/REVIEW_REQUIRED/);assert.equal(s.calls(),0);}finally{cleanFunded(s);}
 });
 test('capital journal writer lock and corrupt file are rejected',()=>{
- const s=ledger();try{assert.throws(()=>new CapitalLedger(s.file,accountId),/EEXIST/);s.book.close();fs.writeFileSync(s.file,'invalid');assert.throws(()=>new CapitalLedger(s.file,accountId));fs.unlinkSync(s.file);s.book=new CapitalLedger(s.file,accountId);}finally{cleanup(s);}
+ const s=ledger();try{assert.throws(()=>new CapitalLedger(s.file,accountId),/EEXIST/);s.book.close();fs.writeFileSync(s.file,'invalid');assert.throws(()=>new CapitalLedger(s.file,accountId));fs.unlinkSync(s.file);removeSnapshotFixtureCompanion(s.file);s.book=new CapitalLedger(s.file,accountId);}finally{cleanup(s);}
 });
 test('capital persistence failure stops before network submission',async()=>{
  const s=funded();try{await s.engine.refresh();if(fs.existsSync(path.join(s.dir,'capital')))fs.unlinkSync(path.join(s.dir,'capital'));fs.mkdirSync(path.join(s.dir,'capital'));await assert.rejects(s.engine.submit(intent,plan));assert.equal(s.calls(),0);await assert.rejects(s.engine.submit({...intent,requestId:'request_0002'},plan),/CLOSED/);}finally{cleanFunded(s);}

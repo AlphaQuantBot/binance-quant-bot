@@ -1,3 +1,4 @@
+import {commitSnapshotMirror,readSnapshot,snapshotExists} from './durableSnapshot';
 import {validateActivity,reconcileActivity,type ActivitySnapshot} from './accountActivity';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,8 +16,8 @@ export class EquityHistory{
  constructor(private file:string,private accountId:string,private now=Date.now){
   if(!/^[\w-]{1,80}$/.test(accountId))throw Error('INVALID_HISTORY_ACCOUNT');
   fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});this.fd=fs.openSync(file+'.lock','wx',0o600);
-  try{if(fs.existsSync(file)){
-   const data=JSON.parse(fs.readFileSync(file,'utf8'));
+  try{if(snapshotExists(file)){
+   const data=readSnapshot(file);
    if(data.version!==1||data.accountId!==accountId||!Array.isArray(data.days))throw Error('INVALID_EQUITY_HISTORY');
    const seen=new Set<string>();let last=0;
    this.days=data.days.map((d:Day)=>{
@@ -27,7 +28,7 @@ export class EquityHistory{
    const latest=this.days.at(-1);if(latest){latest.restartObserved=true;this.persist();}
   }}catch(e){fs.closeSync(this.fd);fs.unlinkSync(file+'.lock');throw e;}
  }
- private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,days:this.days}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
+ private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,days:this.days}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;commitSnapshotMirror(tmp,this.file);}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
  record(sample:Sample,activity?:ActivitySnapshot){
   if(this.closed)throw Error('EQUITY_HISTORY_CLOSED');const now=this.now();
   if(!sample||sample.environment!=='BINANCE_TESTNET'||sample.operation!=='READ_ONLY_ACCOUNT_VALUATION'||sample.accountId!==this.accountId||sample.quoteAsset!=='USDT'||!sample.complete||sample.currentEquityUSDT===null||sample.issues.length||sample.unpricedAssets.length)throw Error('COMPLETE_VALUATION_REQUIRED');

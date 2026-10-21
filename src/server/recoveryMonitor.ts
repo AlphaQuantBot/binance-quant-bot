@@ -1,3 +1,4 @@
+import {commitSnapshotMirror,readSnapshot,snapshotExists} from './durableSnapshot';
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -15,11 +16,11 @@ export class RecoveryMonitor{
   validateMonitorConfig(config);if(!/^testnet_[a-f0-9]{24}$/.test(accountId))throw Error('INVALID_MONITOR_ACCOUNT');this.config={symbols:[...config.symbols].sort(),startTime:config.startTime,intervalMs:config.intervalMs,settlementLagMs:config.settlementLagMs,windowMs:config.windowMs,maxWindowsPerCycle:config.maxWindowsPerCycle};
   this.cursors=this.config.symbols.map(symbol=>({symbol,nextTime:config.startTime}));
   fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});this.fd=fs.openSync(file+'.lock','wx',0o600);
-  try{if(fs.existsSync(file)){const d=JSON.parse(fs.readFileSync(file,'utf8'));if(d.version!==1||d.accountId!==accountId||JSON.stringify(d.config)!==JSON.stringify(this.config)||!Array.isArray(d.cursors)||d.cursors.length!==this.cursors.length||!Number.isInteger(d.turn)||d.turn<0||d.turn>=this.cursors.length||!Number.isSafeInteger(d.lastTick)||d.lastTick<0)throw Error('INVALID_MONITOR_STATE');
+  try{if(snapshotExists(file)){const d=readSnapshot(file);if(d.version!==1||d.accountId!==accountId||JSON.stringify(d.config)!==JSON.stringify(this.config)||!Array.isArray(d.cursors)||d.cursors.length!==this.cursors.length||!Number.isInteger(d.turn)||d.turn<0||d.turn>=this.cursors.length||!Number.isSafeInteger(d.lastTick)||d.lastTick<0)throw Error('INVALID_MONITOR_STATE');
    this.cursors=d.cursors.map((c:Cursor,i:number)=>{if(c.symbol!==this.config.symbols[i]||!Number.isSafeInteger(c.nextTime)||c.nextTime<this.config.startTime)throw Error('INVALID_MONITOR_CURSOR');if(c.active&&(c.active.symbol!==c.symbol||c.active.startTime!==c.nextTime||!Number.isSafeInteger(c.active.endTime)||c.active.endTime<c.nextTime||c.active.endTime-c.nextTime>=this.config.windowMs))throw Error('INVALID_MONITOR_ACTIVE_SCOPE');return structuredClone(c);});this.turn=d.turn;this.lastTick=d.lastTick;
   }}catch(e){fs.closeSync(this.fd);fs.unlinkSync(file+'.lock');throw e;}
  }
- private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,config:this.config,cursors:this.cursors,turn:this.turn,lastTick:this.lastTick}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
+ private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,config:this.config,cursors:this.cursors,turn:this.turn,lastTick:this.lastTick}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;commitSnapshotMirror(tmp,this.file);}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
  async tick(maxWork=this.config.maxWindowsPerCycle){
   if(!Number.isInteger(maxWork)||maxWork<0||maxWork>this.config.maxWindowsPerCycle)throw Error('INVALID_MONITOR_CYCLE_BUDGET');
   if(this.closed)throw Error('MONITOR_CLOSED');if(this.busy)throw Error('MONITOR_BUSY');const startedAt=this.now();if(!Number.isSafeInteger(startedAt)||startedAt<this.lastTick||startedAt<this.config.startTime)throw Error('MONITOR_CLOCK_REGRESSED');

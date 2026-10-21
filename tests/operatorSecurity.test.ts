@@ -1,3 +1,4 @@
+import {assertPrivateFile} from '../src/server/privateStorage';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
@@ -74,7 +75,7 @@ test('vault roundtrip, restrictive permissions, missing/wrong keys and tampering
     const value = { apiKey: 'fixture-api-key', secretKey: 'fixture-secret-key', exchange: 'BINANCE', updatedAt: 1 };
     assert.throws(() => createCredentialVault(file).save(value));
     vault.save(value); assert.deepEqual(vault.load(), value);
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assertPrivateFile(file);
     assert.ok(!fs.readFileSync(file, 'utf8').includes(value.secretKey));
     assert.ok(!fs.readFileSync(file, 'utf8').includes(value.apiKey));
     assert.throws(() => createCredentialVault(file, crypto.randomBytes(32).toString('hex')).load());

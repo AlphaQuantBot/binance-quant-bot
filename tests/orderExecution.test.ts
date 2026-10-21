@@ -1,3 +1,5 @@
+import {removeSnapshotFixtureCompanion} from './fixtures/durableSnapshot';
+import {writeSnapshotFixture} from './fixtures/durableSnapshot';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
@@ -29,11 +31,11 @@ test('same request with changed parameters is a conflict, not another order',asy
 });
 test('crash recovery converts persisted SUBMITTING to UNKNOWN without network',async()=>{
  let calls=0;const adapter:Adapter={submit:async(i,id)=>{calls++;return confirmed(i,id);},query:async()=>null};const s=setup(adapter);
- try{await s.engine.submit(intent);s.engine.close();const data=JSON.parse(fs.readFileSync(s.file,'utf8'));data.orders[0].status='SUBMITTING';delete data.orders[0].confirmation;fs.writeFileSync(s.file,JSON.stringify(data));s.engine=new OrderExecution(s.file,adapter);assert.equal(s.engine.list()[0].status,'UNKNOWN');await s.engine.submit(intent);assert.equal(calls,1);}finally{clean(s);}
+ try{await s.engine.submit(intent);s.engine.close();const data=JSON.parse(fs.readFileSync(s.file,'utf8'));data.orders[0].status='SUBMITTING';delete data.orders[0].confirmation;writeSnapshotFixture(s.file,data);s.engine=new OrderExecution(s.file,adapter);assert.equal(s.engine.list()[0].status,'UNKNOWN');await s.engine.submit(intent);assert.equal(calls,1);}finally{clean(s);}
 });
 test('exclusive process lock and corrupt journal fail closed',()=>{
  const adapter:Adapter={submit:async(i,id)=>confirmed(i,id),query:async()=>null};const s=setup(adapter);
- try{assert.throws(()=>new OrderExecution(s.file,adapter),/EEXIST/);s.engine.close();fs.writeFileSync(s.file,'broken');assert.throws(()=>new OrderExecution(s.file,adapter));fs.unlinkSync(s.file);s.engine=new OrderExecution(s.file,adapter);}finally{clean(s);}
+ try{assert.throws(()=>new OrderExecution(s.file,adapter),/EEXIST/);s.engine.close();fs.writeFileSync(s.file,'broken');assert.throws(()=>new OrderExecution(s.file,adapter));fs.unlinkSync(s.file);removeSnapshotFixtureCompanion(s.file);s.engine=new OrderExecution(s.file,adapter);}finally{clean(s);}
 });
 test('disk failure before submission sends nothing',async()=>{
  let calls=0;const s=setup({submit:async(i,id)=>{calls++;return confirmed(i,id);},query:async()=>null});fs.mkdirSync(s.file);

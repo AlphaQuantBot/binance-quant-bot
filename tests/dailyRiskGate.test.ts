@@ -1,3 +1,4 @@
+import {removeSnapshotFixtureCompanion} from './fixtures/durableSnapshot';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
@@ -26,5 +27,5 @@ test('UTC day rollover needs new full coverage; manual halt survives day rollove
  const s=setup();try{s.gate.assess(evidence(undefined,{currentEquity:'970'}),snapshot(),'20',time);const now=time+86400000;assert.throws(()=>s.gate.assess(evidence(),snapshot(now),'20',now),/EVIDENCE_REQUIRED/);assert.equal(s.gate.assess(evidence(snapshot(now)),snapshot(now),'20',now).latched,false);s.gate.halt();s.gate.close();s.gate=new DailyRiskGate(s.file,accountId);assert.throws(()=>s.gate.assess(evidence(snapshot(now)),snapshot(now),'20',now),/EMERGENCY_HALT/);}finally{clean(s);}
 });
 test('lock/corrupt state and disk failure fail closed',()=>{
- const s=setup();try{assert.throws(()=>new DailyRiskGate(s.file,accountId),/EEXIST/);s.gate.close();fs.writeFileSync(s.file,'broken');assert.throws(()=>new DailyRiskGate(s.file,accountId));fs.unlinkSync(s.file);s.gate=new DailyRiskGate(s.file,accountId);fs.mkdirSync(s.file);assert.throws(()=>s.gate.assess(evidence(),snapshot(),'20',time));assert.throws(()=>s.gate.assess(evidence(),snapshot(),'20',time),/CLOSED/);}finally{clean(s);}
+ const s=setup();try{assert.throws(()=>new DailyRiskGate(s.file,accountId),/EEXIST/);s.gate.close();fs.writeFileSync(s.file,'broken');assert.throws(()=>new DailyRiskGate(s.file,accountId));fs.unlinkSync(s.file);removeSnapshotFixtureCompanion(s.file);s.gate=new DailyRiskGate(s.file,accountId);fs.mkdirSync(s.file);assert.throws(()=>s.gate.assess(evidence(),snapshot(),'20',time));assert.throws(()=>s.gate.assess(evidence(),snapshot(),'20',time),/CLOSED/);}finally{clean(s);}
 });
