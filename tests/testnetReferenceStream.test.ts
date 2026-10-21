@@ -62,7 +62,7 @@ test('post-book stale, cleared, future or disconnected cache fails without REST 
     if(mode==='cleared')f.socket.emit(event(3100,null));if(mode==='future')f.socket.emit(event(3200));if(mode==='disconnected')f.socket.dispatchEvent(new Event('close'));
     return new Response(JSON.stringify({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'1',askQty:'1'}));
    }});
-   await assert.rejects(a.tradeContext('BTCUSDT'));assert.deepEqual(paths,['/api/v3/exchangeInfo','/api/v3/ticker/bookTicker']);
+   await assert.rejects(a.tradeContext('BTCUSDT'),(error:unknown)=>{if(mode==='stale'||mode==='future'){assert.ok(error instanceof ReferencePriceFreshnessError);assert.equal(error.timing.stage,'POST_BOOK_SNAPSHOT');assert.equal(typeof error.timing.bookReadElapsedMs,'number');assert.ok(error.timing.bookReadElapsedMs!>=0);}return true;});assert.deepEqual(paths,['/api/v3/exchangeInfo','/api/v3/ticker/bookTicker']);
   }finally{f.feed.close();}
  }
  assert.throws(()=>createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',referenceSnapshot:()=>({kind:'REFERENCE_PRICE',price:'1',timestamp:1,observedAt:1})}),/CONFIGURATION_INVALID/);
