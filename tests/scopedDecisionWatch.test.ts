@@ -1,3 +1,4 @@
+import {ReferenceClockError} from '../src/server/referenceClock';
 import {ReferenceStreamTimeoutError} from '../src/server/testnetReferenceStream';
 import {ReferencePriceFreshnessError} from '../src/server/priceReference';
 import {test} from 'node:test';
@@ -84,4 +85,20 @@ test('arbitrary thrown objects cannot inject stream diagnostics into the summary
  const f=fixture();f.deps.observe=async()=>{throw {streamDiagnostics:{privatePayload:'secret'}};};
  const s=await runDecisionWatch(3,f.deps,f.stop.signal);
  assert.equal(s.streamDiagnostics,undefined);assert.ok(!JSON.stringify(s).includes('secret'));
+});
+
+test('clock stop retains partial decision evidence and typed numeric diagnosis without retry',async()=>{
+ const f=fixture(),read=f.deps.observe;let attempts=0;
+ const error=new ReferenceClockError('CURRENT_CLOCK_MISMATCH',300,600,590,10);
+ f.deps.observe=async()=>{if(++attempts===2)throw error;return read();};
+ f.deps.errorCode=()=> 'REFERENCE_CLOCK_UNCONFIRMED';
+ const s=await runDecisionWatch(10,f.deps,f.stop.signal);
+ assert.equal(s.state,'STOPPED');assert.equal(s.stopCode,'REFERENCE_CLOCK_UNCONFIRMED');
+ assert.equal(s.completedCycles,1);assert.equal(s.attemptedCycles,2);assert.equal(attempts,2);
+ assert.deepEqual(s.clockDiagnostics,error.clockDiagnostics);assert.equal(s.ordersSubmitted,0);
+});
+test('untyped errors cannot inject clock diagnostics',async()=>{
+ const f=fixture();f.deps.observe=async()=>{throw Object.assign(Error('private detail'),{clockDiagnostics:{secret:'hidden'}});};
+ const s=await runDecisionWatch(3,f.deps,f.stop.signal);
+ assert.equal(s.clockDiagnostics,undefined);assert.doesNotMatch(JSON.stringify(s),/private detail|hidden/);
 });

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {measuredReferenceClock,referenceEventAges} from '../src/server/referenceClock';
+import {measuredReferenceClock,referenceEventAges,ReferenceClockError} from '../src/server/referenceClock';
 import {referenceForFilter} from '../src/server/priceReference';
 import {TestnetReferenceStream} from '../src/server/testnetReferenceStream';
 const clock={serverTime:1500,localStartedAt:1000,localReceivedAt:1200};
@@ -38,4 +38,23 @@ test('slow, expired, malformed and wall-clock-jumped calibrations fail closed',(
  assert.throws(()=>measuredReferenceClock(1500,1000,1200,0,100),/REFERENCE_CLOCK_UNCONFIRMED/);
  const get=measuredReferenceClock(1500,1000,1200,0,200,()=>2000,()=>900);
  assert.throws(get,/REFERENCE_CLOCK_UNCONFIRMED/);
+});
+
+test('clock failures distinguish slow response, expired evidence and actual wall/monotonic disagreement',()=>{
+ const check=(operation:()=>unknown,reason:string,values:Record<string,number>)=>assert.throws(operation,(error:unknown)=>{
+  assert.ok(error instanceof ReferenceClockError);assert.equal(error.message,'REFERENCE_CLOCK_UNCONFIRMED');
+  assert.equal(error.clockDiagnostics.reason,reason);
+  for(const [key,value] of Object.entries(values))assert.equal((error.clockDiagnostics as unknown as Record<string,unknown>)[key],value);
+  return true;
+ });
+ check(()=>referenceEventAges(1500,1200,{...clock,localStartedAt:199}),'ROUND_TRIP_OUT_OF_RANGE',{roundTripMs:1001,measurementAgeMs:0});
+ check(()=>referenceEventAges(1500,31201,clock),'MEASUREMENT_EXPIRED',{roundTripMs:200,measurementAgeMs:30001});
+ check(()=>measuredReferenceClock(1500,1000,1200,0,190),'CALIBRATION_CLOCK_MISMATCH',{roundTripMs:200,monotonicElapsedMs:190,wallClockDriftMs:10});
+ const get=measuredReferenceClock(1500,1000,1200,0,200,()=>2000,()=>990);
+ check(get,'CURRENT_CLOCK_MISMATCH',{measurementAgeMs:800,monotonicElapsedMs:790,wallClockDriftMs:10});
+});
+test('clock diagnostics serialize invalid numeric measurements as null and do not disclose timestamps',()=>{
+ const error=new ReferenceClockError('INVALID_MEASUREMENT',NaN,Infinity,-Infinity);
+ assert.deepEqual(error.clockDiagnostics,{reason:'INVALID_MEASUREMENT',roundTripMs:null,measurementAgeMs:null,monotonicElapsedMs:null,wallClockDriftMs:null});
+ assert.doesNotMatch(JSON.stringify(error),/serverTime|localStartedAt|localReceivedAt/);
 });
