@@ -2,18 +2,19 @@ import type {ReferenceClockEvidence} from './referenceClock';
 import {units} from './exactDecimal';
 import {referenceForFilter,ReferencePriceFreshnessError,type PriceReference} from './priceReference';
 type Socket=Pick<WebSocket,'addEventListener'|'removeEventListener'|'close'>;
-export type ReferenceStreamDiagnostics={opened:boolean;messages:number;referenceEvents:number;nullPrices:number;nonNullPrices:number;waitLimitMs:number};
+export type ReferenceStreamDiagnostics={opened:boolean;messages:number;referenceEvents:number;nullPrices:number;nonNullPrices:number;waitLimitMs:number;waitPhase?:'STARTUP'};
 export class ReferenceStreamTimeoutError extends Error{
  readonly streamDiagnostics:ReferenceStreamDiagnostics;
  constructor(diagnostics:ReferenceStreamDiagnostics){
   super('STREAM_REFERENCE_TIMEOUT');
   this.streamDiagnostics={opened:diagnostics.opened,messages:diagnostics.messages,referenceEvents:diagnostics.referenceEvents,
-   nullPrices:diagnostics.nullPrices,nonNullPrices:diagnostics.nonNullPrices,waitLimitMs:diagnostics.waitLimitMs};
+   nullPrices:diagnostics.nullPrices,nonNullPrices:diagnostics.nonNullPrices,waitLimitMs:diagnostics.waitLimitMs,...(diagnostics.waitPhase?{waitPhase:diagnostics.waitPhase}:{})};
  }
 }
 /** One public, fixed-testnet subscription. No credentials, reconnects or order capabilities. */
 export class TestnetReferenceStream {
  private diagnostics:ReferenceStreamDiagnostics={opened:false,messages:0,referenceEvents:0,nullPrices:0,nonNullPrices:0,waitLimitMs:4000};
+ private startupComplete=false;
  private opened=()=>{this.diagnostics.opened=true;};
  private socket:Socket;private latest?:PriceReference;private failure?:Error;private lastAgeError?:ReferencePriceFreshnessError;private closed=false;
  private waiter?:{resolve:(r:PriceReference)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>};
@@ -72,13 +73,21 @@ export class TestnetReferenceStream {
   referenceForFilter(this.latest,{avgPriceMins:0},this.now());
   return structuredClone(this.latest);
  }
- async read(symbol:string):Promise<PriceReference>{
+ /** Startup is awaited before account/context collection; it never relaxes price freshness. */
+ async warmup(symbol:string):Promise<void>{
+  if(symbol!==this.symbol)throw Error('STREAM_REFERENCE_SYMBOL_MISMATCH');
+  if(this.failure)throw this.failure;if(this.closed)throw Error('STREAM_REFERENCE_CLOSED');
+  if(this.startupComplete)return;
+  await this.readWithWait(symbol,12000,'STARTUP');this.startupComplete=true;
+ }
+ async read(symbol:string):Promise<PriceReference>{return this.readWithWait(symbol,4000);}
+ private async readWithWait(symbol:string,waitLimitMs:number,waitPhase?:'STARTUP'):Promise<PriceReference>{
   if(symbol!==this.symbol)throw Error('STREAM_REFERENCE_SYMBOL_MISMATCH');
   if(this.failure)throw this.failure;if(this.closed)throw Error('STREAM_REFERENCE_CLOSED');
   if(this.fresh())return structuredClone(this.latest!);
   if(this.waiter)throw Error('STREAM_REFERENCE_READER_BUSY');
   return new Promise((resolve,reject)=>{
-   const timer=setTimeout(()=>{this.waiter=undefined;reject(this.lastAgeError??new ReferenceStreamTimeoutError(this.diagnostics));},4000);
+   const timer=setTimeout(()=>{this.waiter=undefined;reject(this.lastAgeError??new ReferenceStreamTimeoutError({...this.diagnostics,waitLimitMs,...(waitPhase?{waitPhase}:{})}));},waitLimitMs);
    this.waiter={resolve,reject,timer};
   });
  }

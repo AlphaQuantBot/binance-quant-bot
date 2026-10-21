@@ -1,7 +1,7 @@
 import {referenceEventAges,type ReferenceClockEvidence} from './referenceClock';
 import { units } from './exactDecimal';
 export type PriceReference = {kind:'REFERENCE_PRICE'|'AVERAGE_PRICE'|'LAST_TRADE';price:string;observedAt:number;timestamp:number;avgPriceMins?:number;absenceConfirmed?:boolean;referenceClock?:ReferenceClockEvidence};
-export type ReferenceFailureStage='INITIAL_STREAM_READ'|'POST_BOOK_SNAPSHOT'|'CONTEXT_REFERENCE_VALIDATION';
+export type ReferenceFailureStage='STARTUP_WARMUP'|'INITIAL_STREAM_READ'|'POST_BOOK_SNAPSHOT'|'CONTEXT_REFERENCE_VALIDATION';
 export type ReferenceFailurePhase='ACCOUNT_OBSERVATION'|'CANDIDATE_REVIEW';
 export class ReferencePriceFreshnessError extends Error {
  readonly timing:{referenceKind:string;requestAgeMs:number|null;eventAgeMs:number|null;serverEventAgeMinMs?:number;serverEventAgeMaxMs?:number;stage?:ReferenceFailureStage;phase?:ReferenceFailurePhase};

@@ -134,3 +134,47 @@ test('observation phase annotation preserves the original stage and ages and ign
  const plain=Error('fixture');assert.equal(annotateReferenceFailure(plain,'INITIAL_STREAM_READ'),plain);
  assert.equal('timing' in plain,false);
 });
+
+test('startup allows a delayed first fresh event while subsequent reads retain 4-second deadline',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const f=setup();
+ try{
+  let complete=false;
+  const startup=f.feed.warmup('BTCUSDT').then(()=>{complete=true;});
+  t.mock.timers.tick(5000);await Promise.resolve();assert.equal(complete,false);
+  f.setClock(6001);f.socket.emit(event(5990));await startup;assert.equal(complete,true);
+  assert.equal((await f.feed.read('BTCUSDT')).timestamp,5990);
+  // Completed warmup is not repeated after a null clears the cached price.
+  f.socket.emit(event(6001,null));await f.feed.warmup('BTCUSDT');
+  const pending=f.feed.read('BTCUSDT');
+  const rejected=assert.rejects(pending,(error:unknown)=>{
+   assert.ok(error instanceof ReferenceStreamTimeoutError);assert.equal(error.streamDiagnostics.waitLimitMs,4000);
+   assert.equal(error.streamDiagnostics.waitPhase,undefined);return true;
+  });
+  t.mock.timers.tick(4000);await rejected;
+ }finally{f.feed.close();}
+});
+test('startup times out at 12 seconds with explicit phase and never treats stale data as fresh',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ for(const stale of [false,true]){
+  const f=setup();
+  try{
+   f.socket.dispatchEvent(new Event('open'));
+   const pending=f.feed.warmup('BTCUSDT');
+   if(stale){f.setClock(5000);f.socket.emit(event(1000));}
+   const rejected=assert.rejects(pending,(error:unknown)=>{
+    if(stale){assert.ok(error instanceof ReferencePriceFreshnessError);assert.equal(error.timing.eventAgeMs,4000);}
+    else{assert.ok(error instanceof ReferenceStreamTimeoutError);assert.equal(error.streamDiagnostics.waitLimitMs,12000);assert.equal(error.streamDiagnostics.waitPhase,'STARTUP');}
+    return true;
+   });
+   t.mock.timers.tick(11999);await Promise.resolve();t.mock.timers.tick(1);await rejected;
+  }finally{f.feed.close();}
+ }
+});
+test('startup close or disconnect rejects immediately without waiting for its longer deadline',async()=>{
+ for(const mode of ['close','disconnect']){
+  const f=setup();const pending=f.feed.warmup('BTCUSDT');
+  const rejected=assert.rejects(pending,mode==='close'?/STREAM_REFERENCE_CLOSED/:/STREAM_REFERENCE_DISCONNECTED/);
+  if(mode==='close')f.feed.close();else f.socket.dispatchEvent(new Event('close'));
+  await rejected;f.feed.close();
+ }
+});
