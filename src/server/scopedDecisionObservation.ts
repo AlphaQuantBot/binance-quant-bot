@@ -1,3 +1,4 @@
+import type {DecisionReferenceSession} from './decisionReferenceSession';
 import {measuredReferenceClock} from './referenceClock';
 import fs from 'node:fs';
 import {ScopedTestnetJournal} from './scopedTestnetJournal';
@@ -6,7 +7,7 @@ import {TestnetReferenceStream} from './testnetReferenceStream';
 import {readSignalCandles,evaluateSignal} from './testnetSignalObserver';
 import {decideScopedSignal} from './scopedSignalDecision';
 import {reviewScopedSignalCandidate} from './scopedSignalOrderReview';
-export async function observeScopedDecision(file:string,apiKey:string,secretKey:string,abortSignal?:AbortSignal){
+export async function observeScopedDecision(file:string,apiKey:string,secretKey:string,abortSignal?:AbortSignal,referenceSession?:DecisionReferenceSession){
  if(!fs.existsSync(file))throw Error('SCOPED_NOT_INITIALIZED');
  const accountId=testnetAccountId(apiKey);
  abortSignal?.throwIfAborted();
@@ -23,7 +24,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   const sample=await readSignalCandles(fetcher);
   const observation=evaluateSignal(sample.raw,sample.serverTime);
   const referenceClock=measuredReferenceClock(sample.serverTime,sample.clockLocalStartedAt,sample.clockLocalReceivedAt,sample.clockStartedAt,sample.clockReceivedAt);
-  stream=new TestnetReferenceStream('BTCUSDT',Date.now,undefined,referenceClock);
+  stream=referenceSession?referenceSession.get(referenceClock):new TestnetReferenceStream('BTCUSDT',Date.now,undefined,referenceClock);
   const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.read(s),referenceSnapshot:s=>stream!.snapshot(s)});
   const reader={accountSnapshot:exchange.accountSnapshot,tradeContext:exchange.tradeContext};
   const [account,context]=await Promise.all([reader.accountSnapshot(),reader.tradeContext('BTCUSDT')]);
@@ -44,7 +45,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
    exchangeValidated:false,capitalReserved:false,feeReservationAuthorized:false,executionAuthorized:false}};
   abortSignal?.throwIfAborted();
   return {report:{...report,recovery},serverTime:sample.serverTime,clockReceivedAt:sample.clockReceivedAt};
- }finally{abortSignal?.removeEventListener('abort',shutdown);stream?.close();journal?.close();}
+ }finally{abortSignal?.removeEventListener('abort',shutdown);if(!referenceSession)stream?.close();journal?.close();}
 }
 export function decisionObservationErrorCode(error:unknown){
  const allowed=['SCOPED_NOT_INITIALIZED','SCOPED_RECONCILIATION_REQUIRED','SCOPED_STATE_INVALID','INVALID_TESTNET_CREDENTIALS',

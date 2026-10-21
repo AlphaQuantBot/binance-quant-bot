@@ -45,8 +45,8 @@ export class TestnetReferenceStream {
    if(typeof r.r!=='string'||units(r.r)<=0n)throw Error('STREAM_REFERENCE_INVALID');
    this.diagnostics.nonNullPrices++;
    if(this.latest&&(r.t<this.latest.timestamp||r.t===this.latest.timestamp&&r.r!==this.latest.price))throw Error('STREAM_REFERENCE_REGRESSED');
-   this.latest={kind:'REFERENCE_PRICE',price:r.r,timestamp:r.t,observedAt:this.now(),...(this.referenceClock?{referenceClock:this.referenceClock()}: {})};
-   if(this.fresh()&&this.waiter){const w=this.waiter;this.waiter=undefined;clearTimeout(w.timer);w.resolve(structuredClone(this.latest));}
+   this.latest={kind:'REFERENCE_PRICE',price:r.r,timestamp:r.t,observedAt:this.now()};
+   if(this.waiter&&this.fresh()){const w=this.waiter;this.waiter=undefined;clearTimeout(w.timer);w.resolve(structuredClone(this.latest));}
   }catch(e){this.fail(e instanceof Error&&['STREAM_REFERENCE_INVALID','STREAM_REFERENCE_DISCONNECTED','STREAM_REFERENCE_REGRESSED','REFERENCE_CLOCK_UNCONFIRMED'].includes(e.message)?e:Error('STREAM_REFERENCE_INVALID'));}
  };
  private error=()=>this.fail(Error('STREAM_REFERENCE_TRANSPORT_UNCONFIRMED'));
@@ -56,6 +56,12 @@ export class TestnetReferenceStream {
   if(this.waiter){const w=this.waiter;this.waiter=undefined;clearTimeout(w.timer);w.reject(error);}
   // An error before read() is retained, not an unhandled rejected promise.
   this.socket.close();
+ }
+ /** Refresh measurement evidence without reconnecting or changing cached event times. */
+ setReferenceClock(clock:()=>ReferenceClockEvidence){
+  if(this.failure)throw this.failure;if(this.closed)throw Error('STREAM_REFERENCE_CLOSED');
+  if(this.waiter)throw Error('STREAM_REFERENCE_READER_BUSY');
+  clock();this.referenceClock=clock;this.lastAgeError=undefined;
  }
  /** Synchronous cached observation only: no wait, reconnect or timestamp refresh. */
  snapshot(symbol:string):PriceReference{
