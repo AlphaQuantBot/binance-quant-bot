@@ -1,6 +1,6 @@
 import {annotateReferenceFailure,type ReferenceFailurePhase} from './priceReference';
 import type {DecisionReferenceSession} from './decisionReferenceSession';
-import {measuredReferenceClock} from './referenceClock';
+import {sampleDecisionReferenceClock} from './decisionReferenceClock';
 import fs from 'node:fs';
 import {ScopedTestnetJournal} from './scopedTestnetJournal';
 import {createBinanceTestnetAdapter,testnetAccountId} from './binanceTestnetAdapter';
@@ -25,7 +25,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   if(recovery.unresolved)throw Error('SCOPED_RECONCILIATION_REQUIRED');
   const sample=await readSignalCandles(fetcher);
   const observation=evaluateSignal(sample.raw,sample.serverTime);
-  const referenceClock=measuredReferenceClock(sample.serverTime,sample.clockLocalStartedAt,sample.clockLocalReceivedAt,sample.clockStartedAt,sample.clockReceivedAt);
+  const {referenceClock,diagnostics:referenceClockSampling}=await sampleDecisionReferenceClock(sample,fetcher);
   stream=referenceSession?referenceSession.get(referenceClock):new TestnetReferenceStream('BTCUSDT',Date.now,undefined,referenceClock);
   // Let the first stream event arrive before starting freshness-bounded account/context reads.
   await stream.warmup('BTCUSDT').catch(error=>{throw annotateReferenceFailure(error,'STARTUP_WARMUP');});
@@ -49,7 +49,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   const report=reviewed??{...decision,orderReview:{state:'NOT_APPLICABLE',code:'NO_CURRENT_CANDIDATE',
    exchangeValidated:false,capitalReserved:false,feeReservationAuthorized:false,executionAuthorized:false}};
   abortSignal?.throwIfAborted();
-  return {report:{...report,recovery},serverTime:sample.serverTime,clockReceivedAt:sample.clockReceivedAt};
+  return {report:{...report,recovery,referenceClockSampling},serverTime:sample.serverTime,clockReceivedAt:sample.clockReceivedAt};
  }catch(error){throw annotateReferenceFailure(error,undefined,phase);}
  finally{abortSignal?.removeEventListener('abort',shutdown);if(!referenceSession)stream?.close();journal?.close();}
 }

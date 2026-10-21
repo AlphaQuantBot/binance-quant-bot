@@ -1,5 +1,5 @@
 export type ReferenceClockEvidence={serverTime:number;localStartedAt:number;localReceivedAt:number};
-export type ReferenceClockFailureReason='INVALID_MEASUREMENT'|'ROUND_TRIP_OUT_OF_RANGE'|'MEASUREMENT_TIME_REGRESSED'|'MEASUREMENT_EXPIRED'|'CALIBRATION_CLOCK_MISMATCH'|'CURRENT_CLOCK_MISMATCH'|'UNSAFE_TIME_ARITHMETIC';
+export type ReferenceClockFailureReason='MEASUREMENTS_DISAGREE'|'INVALID_MEASUREMENT'|'ROUND_TRIP_OUT_OF_RANGE'|'MEASUREMENT_TIME_REGRESSED'|'MEASUREMENT_EXPIRED'|'CALIBRATION_CLOCK_MISMATCH'|'CURRENT_CLOCK_MISMATCH'|'UNSAFE_TIME_ARITHMETIC';
 export type ReferenceClockDiagnostics={reason:ReferenceClockFailureReason;roundTripMs:number|null;measurementAgeMs:number|null;monotonicElapsedMs:number|null;wallClockDriftMs:number|null};
 export class ReferenceClockError extends Error{
  readonly clockDiagnostics:ReferenceClockDiagnostics;
