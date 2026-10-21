@@ -34,7 +34,8 @@
     "testnet:sandbox-sell-once": "node --import tsx scripts/sell_testnet_once.ts",
     "testnet:signals": "node --import tsx scripts/observe_testnet_signals.ts",
     "testnet:decision": "node --import tsx scripts/observe_scoped_decision.ts",
-    "testnet:decision-watch": "node --import tsx scripts/watch_scoped_decisions.ts"
+    "testnet:decision-watch": "node --import tsx scripts/watch_scoped_decisions.ts",
+    "testnet:decision-history": "node --import tsx scripts/read_decision_history.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

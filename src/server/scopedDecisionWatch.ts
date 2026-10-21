@@ -6,7 +6,7 @@ export type DecisionWatchReport={assessment:string;candidate:string;signal?:stri
  orderReview:{state:string};executionAuthorized:boolean;ordersSubmitted:number;automaticTradingEnabled:boolean};
 export type DecisionWatchSample={report:DecisionWatchReport;serverTime:number;clockReceivedAt:number};
 type Dependencies={observe:(signal:AbortSignal)=>Promise<DecisionWatchSample>;wait:(ms:number,signal:AbortSignal)=>Promise<void>;
- monotonicNow:()=>number;emit:(report:DecisionWatchReport,cycle:number)=>void;errorCode:(error:unknown)=>string};
+ monotonicNow:()=>number;record?:(report:DecisionWatchReport,cycle:number)=>void;emit:(report:DecisionWatchReport,cycle:number)=>void;errorCode:(error:unknown)=>string};
 export function summarizeDecisionWatch(reports:readonly DecisionWatchReport[],requestedCycles:number,attemptedCycles:number,state:string,stopCode:string|null,referenceTiming?:ReferencePriceFreshnessError['timing'],streamDiagnostics?:ReferenceStreamDiagnostics,clockDiagnostics?:ReferenceClockDiagnostics){
  const unique=new Map<number,DecisionWatchReport>();
  for(const r of reports)if(r.candleCloseTime!==undefined&&!unique.has(r.candleCloseTime))unique.set(r.candleCloseTime,r);
@@ -52,7 +52,7 @@ export async function runDecisionWatch(cycles:number,deps:Dependencies,stop:Abor
    }
    // Validate the scheduling anchor even on the final cycle, without a wall-clock rebase.
    nextSignalDelay(sample.serverTime,sample.clockReceivedAt,deps.monotonicNow());
-   reports.push(r);deps.emit(r,cycle);
+   deps.record?.(r,cycle);reports.push(r);deps.emit(r,cycle);
    if(r.assessment==='BLOCKED'){state='STOPPED';stopCode='DECISION_BLOCKED';break;}
    if(cycle<cycles)await deps.wait(nextSignalDelay(sample.serverTime,sample.clockReceivedAt,deps.monotonicNow()),stop);
   }
