@@ -29,7 +29,8 @@
     "testnet:order-check": "node --import tsx scripts/check_testnet_order.ts",
     "testnet:sandbox-init": "node --import tsx scripts/scoped_testnet_capital.ts init",
     "testnet:sandbox-status": "node --import tsx scripts/scoped_testnet_capital.ts status",
-    "testnet:sandbox-halt": "node --import tsx scripts/scoped_testnet_capital.ts halt"
+    "testnet:sandbox-halt": "node --import tsx scripts/scoped_testnet_capital.ts halt",
+    "testnet:sandbox-buy-once": "node --import tsx scripts/buy_testnet_once.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

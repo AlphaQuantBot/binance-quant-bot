@@ -80,10 +80,11 @@ not erase the committed allocation; status can inspect it later. Do not delete
 or reinitialize a halted/unresolved journal to bypass its state.
 
 All three CLI commands perform GET/read-only exchange operations (or local halt).
-There is still no matching-engine submitter, automatic trading or live route.
-Windows durable storage/restart must be confirmed before implementing that
-sender. The old funded worker, protective replacement worker, whole-account risk
-gate and LIVE_EXECUTION_PAUSED remain unchanged.
+The separate sandbox-buy-once command now permits one explicit matching-engine
+testnet BUY after the operator confirmed Windows persistence/reopening; see
+TESTNET_BUY_ONCE.md. Automatic trading/live routes, the old funded worker,
+protective replacement worker, whole-account risk gate and LIVE_EXECUTION_PAUSED
+remain unchanged.
 
 ## Validation
 
@@ -98,3 +99,14 @@ exit in that fixture. Neither substitutes for the actual Windows command result.
 Primary runtime/durability references:
 - https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html
 - https://www.sqlite.org/pragma.html#pragma_synchronous
+
+
+## Actual Windows foundation verified; manual one-attempt sender added
+
+Operator init/status on 2cf5f18 created and reopened the allocation successfully:
+cash/equity 100 test USDT, owned BTC and loss zero, no halt/unresolved orders,
+accountConsistent=true. This confirms those actual Windows persistence reads.
+The journal now also persists sendAttemptAt before the single manual testnet POST;
+existing initialized state remains compatible without reset or new allocation.
+The new execution command and its narrower fee/one-attempt constraints are
+specified in TESTNET_BUY_ONCE.md. Actual matching-engine result is still pending.

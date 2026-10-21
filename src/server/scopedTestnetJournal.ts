@@ -8,7 +8,7 @@ import {validateTradeContext,type TradeContext} from './tradingRules';
 import {validateSettlement} from './tradeSettlement';
 import type {Intent,Confirmation} from './orderExecution';
 export const scopedLimits=Object.freeze({symbol:'BTCUSDT',capitalUSDT:'100',maxOrderUSDT:'25',lossLimitUSDT:'5'});
-type Entry={intent:Intent;clientOrderId:string;feeReserveUSDT:string;confirmation?:Confirmation};
+type Entry={intent:Intent;clientOrderId:string;feeReserveUSDT:string;confirmation?:Confirmation;sendAttemptAt?:number};
 type State={version:1;limits:typeof scopedLimits;accountId:string;allocationId:string;createdAt:number;baseline:{BTC:string;USDT:string};haltReasons:string[];orders:Entry[]};
 const terminal=['FILLED','CANCELED','REJECTED','EXPIRED','EXPIRED_IN_MATCH'];
 const statuses=['NEW','PARTIALLY_FILLED','PENDING_NEW','PENDING_CANCEL',...terminal];
@@ -73,7 +73,7 @@ export class ScopedTestnetJournal {
   if(!row)throw Error('SCOPED_NOT_INITIALIZED');const s=JSON.parse(row.payload) as State;
   if(s.version!==1||JSON.stringify(s.limits)!==JSON.stringify(scopedLimits)||s.accountId!==this.accountId||typeof s.allocationId!=='string'||!/^[-\w]{36}$/.test(s.allocationId)||!Number.isSafeInteger(s.createdAt)||s.createdAt<=0||!s.baseline||!Array.isArray(s.orders)||s.orders.length>100||!Array.isArray(s.haltReasons)||s.haltReasons.some(r=>!['OPERATOR_HALT','SCOPED_BALANCE_CHANGED','SCOPED_EXTERNAL_OPEN_ORDER','SCOPED_LOSS_LIMIT_REACHED','SCOPED_ACCOUNT_TRADING_DISABLED'].includes(r)))throw Error('SCOPED_STATE_INVALID');
   units(s.baseline.BTC);units(s.baseline.USDT);const ids=new Set<string>();
-  for(const e of s.orders){checkIntent(e.intent,this.accountId);units(e.feeReserveUSDT);if(ids.has(e.intent.requestId)||e.clientOrderId!==clientId(s,e.intent))throw Error('SCOPED_STATE_INVALID');ids.add(e.intent.requestId);if(e.confirmation)checkConfirmation(e,e.confirmation,undefined);}
+  for(const e of s.orders){checkIntent(e.intent,this.accountId);units(e.feeReserveUSDT);if(e.sendAttemptAt!==undefined&&(!Number.isSafeInteger(e.sendAttemptAt)||e.sendAttemptAt<s.createdAt))throw Error('SCOPED_STATE_INVALID');if(ids.has(e.intent.requestId)||e.clientOrderId!==clientId(s,e.intent))throw Error('SCOPED_STATE_INVALID');ids.add(e.intent.requestId);if(e.confirmation)checkConfirmation(e,e.confirmation,undefined);}
   totals(s);return s;
  }
  private save(s:State){this.db.prepare('INSERT INTO scoped_state(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload').run(JSON.stringify(s));}
@@ -89,13 +89,27 @@ export class ScopedTestnetJournal {
    const state:State={version:1,limits:{...scopedLimits},accountId:this.accountId,allocationId:randomUUID(),createdAt:this.now(),baseline:{BTC:decimal(balance(snapshot,'BTC')),USDT:decimal(balance(snapshot,'USDT'))},haltReasons:[],orders:[]};this.save(state);return {created:true};
   });
  }
- prepare(intent:Intent,feeReserveUSDT:string){
+ find(requestId:string){const row=this.load().orders.find(o=>o.intent.requestId===requestId);return row?structuredClone(row):undefined;}
+ prepareFirstBuy(intent:Intent,feeReserveUSDT:string){
+  if(intent.requestId!=='sandbox_first_buy_v1'||intent.side!=='BUY')throw Error('SCOPED_ONESHOT_IDENTITY_INVALID');
+  return this.prepare(intent,feeReserveUSDT,true);
+ }
+ beginFirstBuySend(){
+  return this.transaction(()=>{const s=this.load(),e=s.orders.find(o=>o.intent.requestId==='sandbox_first_buy_v1');
+   if(s.haltReasons.length)throw Error('SCOPED_HALTED');
+   if(!e||s.orders.length!==1||e.intent.side!=='BUY'||e.sendAttemptAt!==undefined||e.confirmation)throw Error('SCOPED_SEND_ALREADY_CLAIMED');
+   const timestamp=this.now();if(!Number.isSafeInteger(timestamp)||timestamp<s.createdAt)throw Error('SCOPED_CLOCK_INVALID');
+   e.sendAttemptAt=timestamp;this.save(s);return structuredClone(e);
+  });
+ }
+ prepare(intent:Intent,feeReserveUSDT:string,firstOnly=false){
   checkIntent(intent,this.accountId);units(feeReserveUSDT);
   // Normalize the durable identity before deriving the account/allocation-specific ID.
   intent={requestId:intent.requestId,accountId:intent.accountId,symbol:intent.symbol,side:intent.side,quantity:decimal(units(intent.quantity)),limitPrice:decimal(units(intent.limitPrice!))};
   return this.transaction(()=>{
    const s=this.load(),old=s.orders.find(o=>o.intent.requestId===intent.requestId);
-   if(old){if(identity(old.intent)!==identity(intent)||units(old.feeReserveUSDT)!==units(feeReserveUSDT))throw Error('SCOPED_IDEMPOTENCY_CONFLICT');return {created:false,entry:structuredClone(old)};}
+   if(old){if(firstOnly)return {created:false,entry:structuredClone(old)};if(identity(old.intent)!==identity(intent)||units(old.feeReserveUSDT)!==units(feeReserveUSDT))throw Error('SCOPED_IDEMPOTENCY_CONFLICT');return {created:false,entry:structuredClone(old)};}
+   if(firstOnly&&s.orders.length)throw Error('SCOPED_ONESHOT_ALREADY_USED');
    if(s.haltReasons.length)throw Error('SCOPED_HALTED');if(s.orders.some(pending))throw Error('SCOPED_RECONCILIATION_REQUIRED');if(s.orders.length>=100)throw Error('SCOPED_ORDER_COUNT_LIMIT');
    const t=totals(s),principal=(units(intent.quantity)*units(intent.limitPrice!)+scale-1n)/scale;
    if(intent.side==='BUY'?principal+units(feeReserveUSDT)>t.availableCash:units(intent.quantity)>t.availableBTC)throw Error('SCOPED_CAPITAL_UNAVAILABLE');
@@ -122,7 +136,7 @@ export class ScopedTestnetJournal {
    const equity=t.cash+t.btc*units(context.quote.bid)/scale,loss=units(scopedLimits.capitalUSDT)>equity?units(scopedLimits.capitalUSDT)-equity:0n;
    if(loss>=units(scopedLimits.lossLimitUSDT))reasons.add('SCOPED_LOSS_LIMIT_REACHED');
    s.haltReasons=[...reasons];this.save(s);
-   return {environment:'BINANCE_TESTNET',operation:'SCOPED_CAPITAL_AUDIT',limits:scopedLimits,allocatedCashUSDT:decimal(t.cash),ownedBTC:decimal(t.btc),availableCashUSDT:decimal(t.availableCash),scopedEquityUSDT:decimal(equity),lossUSDT:decimal(loss),halted:s.haltReasons.length>0,haltReasons:s.haltReasons,unresolvedOrders:s.orders.filter(pending).length,orderCount:s.orders.length,accountConsistent:!reasons.has('SCOPED_BALANCE_CHANGED')&&!reasons.has('SCOPED_EXTERNAL_OPEN_ORDER'),scope:'LOCAL_BTCUSDT_EXPERIMENT_ONLY',capitalTransferred:false,dailyRiskAuthorized:false,tradingEnabled:false,executionBlockers:['MATCHING_ENGINE_WORKER_NOT_ENABLED']};
+   return {environment:'BINANCE_TESTNET',operation:'SCOPED_CAPITAL_AUDIT',limits:scopedLimits,allocatedCashUSDT:decimal(t.cash),ownedBTC:decimal(t.btc),availableCashUSDT:decimal(t.availableCash),scopedEquityUSDT:decimal(equity),lossUSDT:decimal(loss),halted:s.haltReasons.length>0,haltReasons:s.haltReasons,unresolvedOrders:s.orders.filter(pending).length,orderCount:s.orders.length,accountConsistent:!reasons.has('SCOPED_BALANCE_CHANGED')&&!reasons.has('SCOPED_EXTERNAL_OPEN_ORDER'),scope:'LOCAL_BTCUSDT_EXPERIMENT_ONLY',capitalTransferred:false,dailyRiskAuthorized:false,tradingEnabled:false,executionBlockers:['AUTOMATIC_TRADING_NOT_ENABLED']};
   });
  }
  halt(){this.transaction(()=>{const s=this.load();if(!s.haltReasons.includes('OPERATOR_HALT'))s.haltReasons.push('OPERATOR_HALT');this.save(s);});}
