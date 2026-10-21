@@ -1,3 +1,4 @@
+import {ReferencePriceFreshnessError} from '../src/server/priceReference';
 import 'dotenv/config';
 import path from 'node:path';
 import {observeScopedDecision,decisionObservationErrorCode} from '../src/server/scopedDecisionObservation';
@@ -9,5 +10,5 @@ async function main(){
 }
 main().catch(error=>{
  console.error(JSON.stringify({environment:'BINANCE_TESTNET',operation:'READ_ONLY_SCOPED_SIGNAL_DECISION',assessment:'BLOCKED',
-  code:decisionObservationErrorCode(error),executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false},null,2));process.exitCode=1;
+  code:decisionObservationErrorCode(error),...(error instanceof ReferencePriceFreshnessError?{referenceTiming:error.timing}:{}),executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false},null,2));process.exitCode=1;
 });

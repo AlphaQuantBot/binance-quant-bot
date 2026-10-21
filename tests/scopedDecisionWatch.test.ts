@@ -1,3 +1,4 @@
+import {ReferencePriceFreshnessError} from '../src/server/priceReference';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -56,4 +57,13 @@ test('both operator entrypoints share the observation implementation without sen
  assert.doesNotMatch(source,/\.(submit|cancel|initialize|prepare|prepareFirstBuy|prepareFirstSell|validateTestOrder)\s*\(/);
  assert.match(source,/if\(!fs.existsSync\(file\)\)throw Error\('SCOPED_NOT_INITIALIZED'\)/);
  for(const file of ['observe_scoped_decision.ts','watch_scoped_decisions.ts'])assert.match(fs.readFileSync(new URL('../scripts/'+file,import.meta.url),'utf8'),/observeScopedDecision/);
+});
+
+test('stale-reference stop summary retains only safe numeric freshness diagnostics',async()=>{
+ const f=fixture();f.deps.observe=async()=>{throw new ReferencePriceFreshnessError({kind:'REFERENCE_PRICE',price:'100',timestamp:1000,observedAt:2900},3100);};
+ f.deps.errorCode=()=> 'STALE_REFERENCE_PRICE';
+ const s=await runDecisionWatch(3,f.deps,f.stop.signal);
+ assert.equal(s.state,'STOPPED');assert.equal(s.stopCode,'STALE_REFERENCE_PRICE');
+ assert.deepEqual(s.referenceTiming,{referenceKind:'REFERENCE_PRICE',requestAgeMs:200,eventAgeMs:2100});
+ assert.equal(s.completedCycles,0);assert.equal(f.waits.length,0);assert.ok(!JSON.stringify(s).includes('"price"'));
 });

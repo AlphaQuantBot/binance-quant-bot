@@ -22,7 +22,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   const sample=await readSignalCandles(fetcher);
   const observation=evaluateSignal(sample.raw,sample.serverTime);
   stream=new TestnetReferenceStream('BTCUSDT');
-  const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.read(s)});
+  const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.read(s),referenceSnapshot:s=>stream!.snapshot(s)});
   const reader={accountSnapshot:exchange.accountSnapshot,tradeContext:exchange.tradeContext};
   const [account,context]=await Promise.all([reader.accountSnapshot(),reader.tradeContext('BTCUSDT')]);
   const audit=journal.audit(account,context);

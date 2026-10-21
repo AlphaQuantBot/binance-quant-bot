@@ -26,3 +26,44 @@ test('adapter uses warmed stream then fresh book, with no REST reference fallbac
 test('failed stream or stale stream data stops context without REST/average substitution',async()=>{
  for(const mode of ['failed','stale']){const paths:string[]=[];const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>5000,referenceReader:async()=>{if(mode==='failed')throw Error('STREAM_REFERENCE_DISCONNECTED');return {kind:'REFERENCE_PRICE',price:'100',timestamp:2000,observedAt:4999};},fetcher:async url=>{const p=new URL(String(url)).pathname;paths.push(p);return new Response(JSON.stringify(p.endsWith('exchangeInfo')?{symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[{filterType:'PERCENT_PRICE',avgPriceMins:5}]}],exchangeFilters:[]}:{symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'1',askQty:'1'}));}});await assert.rejects(a.tradeContext('BTCUSDT'));assert.equal(paths.includes('/api/v3/referencePrice'),false);assert.equal(paths.includes('/api/v3/avgPrice'),false);}
 });
+
+test('cached snapshot never waits or refreshes stale/future exchange timestamps',()=>{
+ const f=setup();try{
+  assert.throws(()=>f.feed.snapshot('BTCUSDT'),/UNAVAILABLE/);f.socket.emit(event());
+  const first=f.feed.snapshot('BTCUSDT');assert.equal(first.timestamp,1000);assert.equal(first.observedAt,1001);
+  f.setClock(3100);assert.throws(()=>f.feed.snapshot('BTCUSDT'),(e:unknown)=>e instanceof ReferencePriceFreshnessError&&e.timing.eventAgeMs===2100);
+  f.socket.emit(event(3200));assert.throws(()=>f.feed.snapshot('BTCUSDT'),(e:unknown)=>e instanceof ReferencePriceFreshnessError&&e.timing.eventAgeMs===-100);
+  f.socket.emit(event(3201,null));assert.throws(()=>f.feed.snapshot('BTCUSDT'),/UNAVAILABLE/);
+ }finally{f.feed.close();}assert.throws(()=>f.feed.snapshot('BTCUSDT'),/CLOSED/);
+});
+test('post-book cached event replaces an aging initial event with no HTTP retry or stream wait',async()=>{
+ const f=setup();let clock=2900,reads=0,snapshots=0,bookDone=false;const paths:string[]=[];
+ try{f.socket.emit(event());f.setClock(clock);
+  const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>clock,
+   referenceReader:async s=>{reads++;return f.feed.read(s);},
+   referenceSnapshot:s=>{snapshots++;assert.equal(bookDone,true);return f.feed.snapshot(s);},
+   fetcher:async url=>{const p=new URL(String(url)).pathname;paths.push(p);
+    if(p.endsWith('exchangeInfo'))return new Response(JSON.stringify({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[{filterType:'PERCENT_PRICE',avgPriceMins:5}]}],exchangeFilters:[]}));
+    clock=3100;f.setClock(clock);f.socket.emit(event(3099,'101'));bookDone=true;
+    return new Response(JSON.stringify({symbol:'BTCUSDT',bidPrice:'101',askPrice:'101',bidQty:'1',askQty:'1'}));
+   }});
+  const c=await a.tradeContext('BTCUSDT');assert.equal(c.reference?.timestamp,3099);assert.equal(c.reference?.observedAt,3100);
+  assert.equal(reads,1);assert.equal(snapshots,1);assert.deepEqual(paths,['/api/v3/exchangeInfo','/api/v3/ticker/bookTicker']);
+ }finally{f.feed.close();}
+});
+test('post-book stale, cleared, future or disconnected cache fails without REST fallback or retry',async()=>{
+ for(const mode of ['stale','cleared','future','disconnected']){
+  const f=setup();let clock=2900;const paths:string[]=[];
+  try{f.socket.emit(event());f.setClock(clock);
+   const a=createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',now:()=>clock,referenceReader:s=>f.feed.read(s),referenceSnapshot:s=>f.feed.snapshot(s),fetcher:async url=>{
+    const p=new URL(String(url)).pathname;paths.push(p);
+    if(p.endsWith('exchangeInfo'))return new Response(JSON.stringify({symbols:[{symbol:'BTCUSDT',baseAsset:'BTC',quoteAsset:'USDT',status:'TRADING',isSpotTradingAllowed:true,orderTypes:['LIMIT'],filters:[{filterType:'PERCENT_PRICE',avgPriceMins:5}]}],exchangeFilters:[]}));
+    clock=3100;f.setClock(clock);
+    if(mode==='cleared')f.socket.emit(event(3100,null));if(mode==='future')f.socket.emit(event(3200));if(mode==='disconnected')f.socket.dispatchEvent(new Event('close'));
+    return new Response(JSON.stringify({symbol:'BTCUSDT',bidPrice:'100',askPrice:'100',bidQty:'1',askQty:'1'}));
+   }});
+   await assert.rejects(a.tradeContext('BTCUSDT'));assert.deepEqual(paths,['/api/v3/exchangeInfo','/api/v3/ticker/bookTicker']);
+  }finally{f.feed.close();}
+ }
+ assert.throws(()=>createBinanceTestnetAdapter({apiKey:'fixtureKey',secretKey:'fixtureSecret',referenceSnapshot:()=>({kind:'REFERENCE_PRICE',price:'1',timestamp:1,observedAt:1})}),/CONFIGURATION_INVALID/);
+});

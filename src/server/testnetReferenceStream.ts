@@ -40,6 +40,14 @@ export class TestnetReferenceStream {
   // An error before read() is retained, not an unhandled rejected promise.
   this.socket.close();
  }
+ /** Synchronous cached observation only: no wait, reconnect or timestamp refresh. */
+ snapshot(symbol:string):PriceReference{
+  if(symbol!==this.symbol)throw Error('STREAM_REFERENCE_SYMBOL_MISMATCH');
+  if(this.failure)throw this.failure;if(this.closed)throw Error('STREAM_REFERENCE_CLOSED');
+  if(!this.latest)throw Error('STREAM_REFERENCE_UNAVAILABLE');
+  referenceForFilter(this.latest,{avgPriceMins:0},this.now());
+  return structuredClone(this.latest);
+ }
  async read(symbol:string):Promise<PriceReference>{
   if(symbol!==this.symbol)throw Error('STREAM_REFERENCE_SYMBOL_MISMATCH');
   if(this.failure)throw this.failure;if(this.closed)throw Error('STREAM_REFERENCE_CLOSED');

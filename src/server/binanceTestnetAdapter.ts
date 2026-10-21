@@ -33,8 +33,9 @@ function normalize(raw: unknown, intent: Intent, clientOrderId: string): Confirm
 export function testnetAccountId(apiKey: string) { return 'testnet_' + createHash('sha256').update(apiKey).digest('hex').slice(0,24); }
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
-  apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number; referenceReader?:(symbol:string)=>Promise<PriceReference>;
+  apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number; referenceReader?:(symbol:string)=>Promise<PriceReference>; referenceSnapshot?:(symbol:string)=>PriceReference;
 }): Adapter & { validateTestOrder(intent:Intent,clientOrderId:string):Promise<void>; valuationMarks(assets:string[]):Promise<ValuationMark[]>; accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
+  if(options.referenceSnapshot&&!options.referenceReader)throw Error('STREAM_REFERENCE_CONFIGURATION_INVALID');
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
   const fetcher = options.fetcher ?? fetch, now = options.now ?? Date.now;
@@ -138,6 +139,14 @@ export function createBinanceTestnetAdapter(options: {
       // Read independent reference and book concurrently, retaining original request timestamps.
       const [initialReference,book]=await Promise.all([referencePromise,request('GET','/api/v3/ticker/bookTicker',{symbol},false,false)]);
       let reference=initialReference;
+      // A supplied snapshot is synchronous: select the feed's latest real event
+      // after the book read without another HTTP request, stream wait or fallback.
+      if(percent.length&&options.referenceReader&&options.referenceSnapshot){
+        const cached=options.referenceSnapshot(symbol);
+        if(cached.kind!=='REFERENCE_PRICE')throw Error('STREAM_REFERENCE_INVALID');
+        if(reference&&(cached.timestamp<reference.timestamp||cached.timestamp===reference.timestamp&&cached.price!==reference.price))throw Error('STREAM_REFERENCE_REGRESSED');
+        reference=cached;
+      }
       const q=object(book);
       if(q.symbol!==symbol)throw Error('BOOK_SYMBOL_MISMATCH');
       const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
