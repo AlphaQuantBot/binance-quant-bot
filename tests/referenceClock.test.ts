@@ -29,8 +29,8 @@ test('uncertainty must prove both nonfuture and no older than 2000 ms',()=>{
  assert.throws(()=>referenceForFilter({...r,observedAt:1},{avgPriceMins:0},2002),/STALE_REFERENCE_PRICE/);
  assert.throws(()=>referenceForFilter({...r,referenceClock:undefined},{avgPriceMins:0},2000),/STALE_REFERENCE_PRICE/);
 });
-test('slow, expired, malformed and wall-clock-jumped calibrations fail closed',()=>{
- for(const value of [{...clock,localStartedAt:100},{...clock,serverTime:NaN},{...clock,localReceivedAt:999}]){
+test('negative-duration, expired, malformed and wall-clock-jumped calibrations fail closed',()=>{
+ for(const value of [{...clock,localStartedAt:1300},{...clock,serverTime:NaN},{...clock,localReceivedAt:999}]){
   assert.throws(()=>referenceEventAges(1500,2000,value),/REFERENCE_CLOCK_UNCONFIRMED/);
  }
  assert.throws(()=>referenceEventAges(1500,31201,clock),/REFERENCE_CLOCK_UNCONFIRMED/);
@@ -40,14 +40,14 @@ test('slow, expired, malformed and wall-clock-jumped calibrations fail closed',(
  assert.throws(get,/REFERENCE_CLOCK_UNCONFIRMED/);
 });
 
-test('clock failures distinguish slow response, expired evidence and actual wall/monotonic disagreement',()=>{
+test('clock failures distinguish invalid duration, expired evidence and actual wall/monotonic disagreement',()=>{
  const check=(operation:()=>unknown,reason:string,values:Record<string,number>)=>assert.throws(operation,(error:unknown)=>{
   assert.ok(error instanceof ReferenceClockError);assert.equal(error.message,'REFERENCE_CLOCK_UNCONFIRMED');
   assert.equal(error.clockDiagnostics.reason,reason);
   for(const [key,value] of Object.entries(values))assert.equal((error.clockDiagnostics as unknown as Record<string,unknown>)[key],value);
   return true;
  });
- check(()=>referenceEventAges(1500,1200,{...clock,localStartedAt:199}),'ROUND_TRIP_OUT_OF_RANGE',{roundTripMs:1001,measurementAgeMs:0});
+ check(()=>referenceEventAges(1500,1200,{...clock,localStartedAt:1201}),'ROUND_TRIP_OUT_OF_RANGE',{roundTripMs:-1,measurementAgeMs:0});
  check(()=>referenceEventAges(1500,31201,clock),'MEASUREMENT_EXPIRED',{roundTripMs:200,measurementAgeMs:30001});
  check(()=>measuredReferenceClock(1500,1000,1200,0,190),'CALIBRATION_CLOCK_MISMATCH',{roundTripMs:200,monotonicElapsedMs:190,wallClockDriftMs:10});
  const get=measuredReferenceClock(1500,1000,1200,0,200,()=>2000,()=>990);
@@ -57,4 +57,25 @@ test('clock diagnostics serialize invalid numeric measurements as null and do no
  const error=new ReferenceClockError('INVALID_MEASUREMENT',NaN,Infinity,-Infinity);
  assert.deepEqual(error.clockDiagnostics,{reason:'INVALID_MEASUREMENT',roundTripMs:null,measurementAgeMs:null,monotonicElapsedMs:null,wallClockDriftMs:null});
  assert.doesNotMatch(JSON.stringify(error),/serverTime|localStartedAt|localReceivedAt/);
+});
+
+test('1150 ms round trip is accepted only when the full possible event age is fresh',()=>{
+ const wide={serverTime:5000,localStartedAt:1000,localReceivedAt:2150};
+ const get=measuredReferenceClock(5000,1000,2150,0,1150,()=>2250,()=>1250);
+ assert.deepEqual(get(),wide);
+ const r={kind:'REFERENCE_PRICE' as const,price:'100',timestamp:4990,observedAt:2250,referenceClock:get()};
+ assert.deepEqual(referenceEventAges(r.timestamp,2250,wide),{youngest:109,oldest:1261});
+ assert.equal(referenceForFilter(r,{avgPriceMins:0},2250),100n*10n**18n);
+ assert.throws(()=>referenceForFilter({...r,timestamp:5100},{avgPriceMins:0},2250),/STALE_REFERENCE_PRICE/);
+ assert.throws(()=>referenceForFilter({...r,timestamp:4250},{avgPriceMins:0},2250),/STALE_REFERENCE_PRICE/);
+ // Worst-case age of exactly 2000 ms passes; 2001 ms still fails.
+ assert.equal(referenceForFilter({...r,timestamp:4251},{avgPriceMins:0},2250),100n*10n**18n);
+});
+test('uncertainty wider than the entire freshness window cannot authorize any reference',()=>{
+ const wide={serverTime:5000,localStartedAt:1000,localReceivedAt:3150};
+ // A valid measurement can still be too uncertain to prove a usable price.
+ const get=measuredReferenceClock(5000,1000,3150,0,2150,()=>3250,()=>2250);
+ for(const timestamp of [4990,5100,5200,6000]){
+  assert.throws(()=>referenceForFilter({kind:'REFERENCE_PRICE',price:'100',timestamp,observedAt:3250,referenceClock:get()},{avgPriceMins:0},3250),/STALE_REFERENCE_PRICE/);
+ }
 });

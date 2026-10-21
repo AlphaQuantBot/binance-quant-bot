@@ -4,7 +4,7 @@ REFERENCE_CLOCK_UNCONFIRMED remains a stopping condition. Typed ReferenceClockEr
 
 reason identifies the failed check:
 - INVALID_MEASUREMENT: invalid timestamp values.
-- ROUND_TRIP_OUT_OF_RANGE: negative or greater-than-1000-ms clock round trip.
+- ROUND_TRIP_OUT_OF_RANGE: negative clock round trip. Nonnegative durations are assessed through the full event-age uncertainty interval rather than a separate upper cap.
 - MEASUREMENT_TIME_REGRESSED: local now precedes calibration receipt.
 - MEASUREMENT_EXPIRED: calibration older than 30000 ms.
 - CALIBRATION_CLOCK_MISMATCH: invalid monotonic duration or wall/monotonic duration discrepancy greater than 5 ms during sampling.
@@ -13,7 +13,7 @@ reason identifies the failed check:
 
 Numbers: roundTripMs, measurementAgeMs, monotonicElapsedMs, wallClockDriftMs. Drift is signed wall elapsed minus monotonic elapsed. Unavailable or nonfinite values serialize as null. Calibration mismatch reports measurementAgeMs=0 because it occurs at calibration receipt. No raw epoch timestamps, credentials, price or arbitrary error text is included.
 
-The validation order, thresholds, lack of retries, zero execution authority and terminal error behavior remain unchanged. Summaries preserve prior completed cycles when a later cycle's clock check fails.
+Clock mismatch and calibration age thresholds, lack of retries, zero execution authority and terminal error behavior remain unchanged. The former separate 1000 ms round-trip cap has been removed; the strict [0, 2000] ms worst-case event-age policy remains. Summaries preserve prior completed cycles when a later cycle's clock check fails.
 
 Actual prior observation: a BUY crossing produced a locally verified bounded candidate for 0.00029 BTC at 83616.01, notional 24.2486429 USDT, with reported undiscounted fee estimate zero. No exchange validation, capital reservation or order submission occurred. A second HOLD/WAIT completed; attempt three stopped with an undifferentiated clock error. These diagnostics do not retroactively establish its cause.
 

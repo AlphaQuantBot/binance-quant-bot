@@ -15,7 +15,7 @@ export function referenceEventAges(timestamp:number,now:number,clock:ReferenceCl
  const {serverTime,localStartedAt,localReceivedAt}=clock;
  const rtt=localReceivedAt-localStartedAt,elapsed=now-localReceivedAt;
  if(![timestamp,now,serverTime,localStartedAt,localReceivedAt].every(Number.isSafeInteger)||serverTime<=0||localStartedAt<=0)throw new ReferenceClockError('INVALID_MEASUREMENT',rtt,elapsed);
- if(rtt<0||rtt>1000)throw new ReferenceClockError('ROUND_TRIP_OUT_OF_RANGE',rtt,elapsed);
+ if(rtt<0)throw new ReferenceClockError('ROUND_TRIP_OUT_OF_RANGE',rtt,elapsed);
  if(elapsed<0)throw new ReferenceClockError('MEASUREMENT_TIME_REGRESSED',rtt,elapsed);
  if(elapsed>30000)throw new ReferenceClockError('MEASUREMENT_EXPIRED',rtt,elapsed);
  const youngest=serverTime+elapsed-1-timestamp,oldest=serverTime+elapsed+rtt+1-timestamp;
