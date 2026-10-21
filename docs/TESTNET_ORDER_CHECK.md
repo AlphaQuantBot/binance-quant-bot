@@ -94,3 +94,37 @@ the entire supplied BTCUSDT symbol filter set and malformed limit rejection.
 Local validation: 246 tests, TypeScript and production build passed. Actual
 operator order-check after this change remains pending; no matching-engine
 order has been created by these checks.
+
+## Warm public reference stream for order validation
+
+The operator reported subsequent REST-reference event age 3297ms despite a recent
+708ms request. Three public clock samples showed server offsets +208/+112/+114ms
+with RTT 472/299/280ms. These small samples do not explain the multi-second age;
+no timestamp correction or freshness relaxation is applied.
+
+The order-check CLI now opens a single public BTCUSDT referencePrice WebSocket
+at startup, in parallel with account reads. It injects a reader of actual stream
+events into tradeContext. After exchangeInfo, a fresh stream event is selected
+and a fresh REST book is requested. Stream payloads retain engine timestamp t
+and local receipt observedAt. Both remain subject to the original 2000ms checks.
+Official testnet stream documentation:
+https://github.com/binance/binance-spot-api-docs/blob/master/testnet/web-socket-streams.md#reference-price-streams
+
+The fixed URL is wss://stream.testnet.binance.vision/ws/btcusdt@referencePrice.
+No credentials are sent. Native Node WebSocket is used, without new dependencies.
+Only matching symbol/type and positive decimal prices are accepted; null clears
+availability. Malformed, regressed or disconnected streams block. Stale/future
+events cannot satisfy a reader. Waiting is bounded to four seconds, no reconnect
+or REST/average substitution is attempted, and finally closes the socket on
+success/failure. Errors before a reader exists are retained without an unhandled
+promise rejection. Safe stream codes and actual freshness ages remain visible.
+
+Default adapter callers without referenceReader keep the previous bounded REST
+behavior; the CLI stream path never performs the REST reference refresh. It
+still calls only /order/test, never the matching-engine order endpoint. This
+change supplies a different real data source, not proof of order validation.
+Local validation: 254 tests, TypeScript and production build passed. Actual
+Windows order-check using the stream remains pending.
+The host's separate public stream probe received no qualifying event within the
+four-second wait and returned STREAM_REFERENCE_TIMEOUT (no account keys used).
+This is an unconfirmed real stream result, separate from passing fixtures.

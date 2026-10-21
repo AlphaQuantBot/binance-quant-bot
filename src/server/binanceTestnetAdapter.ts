@@ -33,7 +33,7 @@ function normalize(raw: unknown, intent: Intent, clientOrderId: string): Confirm
 export function testnetAccountId(apiKey: string) { return 'testnet_' + createHash('sha256').update(apiKey).digest('hex').slice(0,24); }
 /** Not registered with the app. Only testnet, one HTTP attempt, no redirects or alternate hosts. */
 export function createBinanceTestnetAdapter(options: {
-  apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number;
+  apiKey: string; secretKey: string; fetcher?: typeof fetch; now?: () => number; referenceReader?:(symbol:string)=>Promise<PriceReference>;
 }): Adapter & { validateTestOrder(intent:Intent,clientOrderId:string):Promise<void>; valuationMarks(assets:string[]):Promise<ValuationMark[]>; accountSnapshot(): Promise<AccountSnapshot>; tradeContext(symbol:string):Promise<TradeContext>; protectionOrder(symbol:string, orderId:string):Promise<unknown>; commissionRates(symbol:string):Promise<CommissionSnapshot>; tradeHistory(symbol:string,startTime:number,endTime:number):Promise<TradeHistoryWindow> } {
   const { apiKey, secretKey } = options;
   if (!/^[A-Za-z0-9]{8,256}$/.test(apiKey) || !/^[A-Za-z0-9]{8,256}$/.test(secretKey)) throw Error('INVALID_TESTNET_CREDENTIALS');
@@ -106,6 +106,11 @@ export function createBinanceTestnetAdapter(options: {
       const percent=r.filters.filter((f:any)=>['PERCENT_PRICE','PERCENT_PRICE_BY_SIDE'].includes(f?.filterType));
       const referencePromise=(async()=>{
       let reference:PriceReference|undefined;
+      if(percent.length&&options.referenceReader){
+        const streamed=await options.referenceReader(symbol);
+        if(streamed.kind!=='REFERENCE_PRICE')throw Error('STREAM_REFERENCE_INVALID');
+        return streamed;
+      }
       if(percent.length){
         const observedAt=now();
         const raw=object(await request('GET','/api/v3/referencePrice',{symbol},false,false,true));
@@ -127,6 +132,8 @@ export function createBinanceTestnetAdapter(options: {
       }
       return reference;
       })();
+      // With a warmed stream, obtain its current event before requesting a fresh book.
+      if(options.referenceReader)await referencePromise;
       const quoteAt=now();
       // Read independent reference and book concurrently, retaining original request timestamps.
       const [initialReference,book]=await Promise.all([referencePromise,request('GET','/api/v3/ticker/bookTicker',{symbol},false,false)]);
@@ -139,7 +146,7 @@ export function createBinanceTestnetAdapter(options: {
       catch(error){
         // Only a successful, valid but event-old reference gets one fresh read.
         // Never retry transport/HTTP errors, future timestamps or slow requests.
-        if(!(error instanceof ReferencePriceFreshnessError)||reference?.kind!=='REFERENCE_PRICE'||error.timing.requestAgeMs===null||error.timing.requestAgeMs<0||error.timing.requestAgeMs>2000||error.timing.eventAgeMs===null||error.timing.eventAgeMs<=2000||units(reference.price)<=0n)throw error;
+        if(options.referenceReader||!(error instanceof ReferencePriceFreshnessError)||reference?.kind!=='REFERENCE_PRICE'||error.timing.requestAgeMs===null||error.timing.requestAgeMs<0||error.timing.requestAgeMs>2000||error.timing.eventAgeMs===null||error.timing.eventAgeMs<=2000||units(reference.price)<=0n)throw error;
         const observedAt=now();
         const raw=object(await request('GET','/api/v3/referencePrice',{symbol},false,false));
         if(raw.symbol!==symbol||typeof raw.referencePrice!=='string'||units(raw.referencePrice)<=0n)throw Error('REFERENCE_REFRESH_UNCONFIRMED');
