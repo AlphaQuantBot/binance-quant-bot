@@ -22,4 +22,4 @@ Keep the SQLite file and any WAL/SHM companions together when backing up a stopp
 
 Tests added: reopen with final summary; exact replay/revision handling; unfinalized sessions across restart; unsafe reports/inconsistent summaries; actual SQLite writer contention stopping further work; committed observation surviving abrupt child exit; and read-only history without file creation or exchange capability.
 
-The preceding application revision passed operator Windows lint and 354 tests and completed a ten-cycle actual read-only watch. Those results do not validate this new persistence change. Native tests for this revision remain pending because the development container is offline.
+Operator validation on 550377d: full Windows security suite passed 361/361 with zero failed, cancelled or skipped tests. An actual three-cycle watch completed with three contiguous HOLD/WAIT observations, persistedSession=true and zero orders. A separate history process returned the same session ID and summary. See TESTNET_VALIDATION.md for the exact counts, session ID and scope. The development container remains offline; these are operator-supplied results.
