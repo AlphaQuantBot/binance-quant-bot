@@ -94,6 +94,30 @@ export class ScopedTestnetJournal {
   if(intent.requestId!=='sandbox_first_buy_v1'||intent.side!=='BUY')throw Error('SCOPED_ONESHOT_IDENTITY_INVALID');
   return this.prepare(intent,feeReserveUSDT,true);
  }
+ prepareFirstSell(intent:Intent){
+  if(intent.requestId!=='sandbox_first_sell_v1'||intent.side!=='SELL')throw Error('SCOPED_ONESHOT_IDENTITY_INVALID');
+  return this.transaction(()=>{
+   const s=this.load(),old=s.orders.find(o=>o.intent.requestId===intent.requestId);
+   if(old)return {created:false,entry:structuredClone(old)};
+   const buy=s.orders[0];
+   if(s.orders.length!==1||buy?.intent.requestId!=='sandbox_first_buy_v1'||!buy.confirmation||!terminal.includes(buy.confirmation.status)||totals(s).btc<=0n)throw Error('SCOPED_SELL_NOT_READY');
+   // prepare owns its own transaction; perform the same fixed constraints here.
+   checkIntent(intent,this.accountId);
+   if(s.haltReasons.length)throw Error('SCOPED_HALTED');
+   if(units(intent.quantity)>totals(s).availableBTC)throw Error('SCOPED_CAPITAL_UNAVAILABLE');
+   const canonical:Intent={requestId:intent.requestId,accountId:intent.accountId,symbol:intent.symbol,side:'SELL',quantity:decimal(units(intent.quantity)),limitPrice:decimal(units(intent.limitPrice!))};
+   const entry:Entry={intent:canonical,clientOrderId:clientId(s,canonical),feeReserveUSDT:'0'};
+   s.orders.push(entry);totals(s);this.save(s);return {created:true,entry:structuredClone(entry)};
+  });
+ }
+ beginFirstSellSend(){
+  return this.transaction(()=>{const s=this.load(),e=s.orders.find(o=>o.intent.requestId==='sandbox_first_sell_v1');
+   if(s.haltReasons.length)throw Error('SCOPED_HALTED');
+   if(!e||s.orders.length!==2||e.intent.side!=='SELL'||e.sendAttemptAt!==undefined||e.confirmation)throw Error('SCOPED_SEND_ALREADY_CLAIMED');
+   const timestamp=this.now();if(!Number.isSafeInteger(timestamp)||timestamp<s.createdAt)throw Error('SCOPED_CLOCK_INVALID');
+   e.sendAttemptAt=timestamp;this.save(s);return structuredClone(e);
+  });
+ }
  beginFirstBuySend(){
   return this.transaction(()=>{const s=this.load(),e=s.orders.find(o=>o.intent.requestId==='sandbox_first_buy_v1');
    if(s.haltReasons.length)throw Error('SCOPED_HALTED');
