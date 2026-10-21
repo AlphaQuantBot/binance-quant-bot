@@ -1,7 +1,7 @@
 import {normalizeValuationMarks,type ValuationMark} from './valuationMarks';
 import {backfillTrades,type TradeHistoryWindow} from './tradeBackfill';
 import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
-import { referenceForFilter, ReferencePriceFreshnessError, annotateReferenceFailure, annotateReferenceBookRead, type PriceReference } from './priceReference';
+import { referenceForFilter, ReferencePriceFreshnessError, annotateReferenceFailure, annotateReferenceBookRead, annotateReferenceBookProgress, type PriceReference } from './priceReference';
 import { validateTradeContext, type TradeContext } from './tradingRules';
 import { normalizeBalances, validateAccountSnapshot, type AccountSnapshot, type OpenOrder } from './accountSnapshot';
 import { createHash, createHmac } from 'node:crypto';
@@ -144,7 +144,7 @@ export function createBinanceTestnetAdapter(options: {
       // after the book read without another HTTP request, stream wait or fallback.
       if(percent.length&&options.referenceReader&&options.referenceSnapshot){
         let cached:PriceReference;
-        try{cached=options.referenceSnapshot(symbol);}catch(error){throw annotateReferenceBookRead(annotateReferenceFailure(error,'POST_BOOK_SNAPSHOT'),bookReadElapsedMs);}
+        try{cached=options.referenceSnapshot(symbol);}catch(error){throw annotateReferenceBookProgress(annotateReferenceBookRead(annotateReferenceFailure(error,'POST_BOOK_SNAPSHOT'),bookReadElapsedMs),initialReference,quoteAt);}
         if(cached.kind!=='REFERENCE_PRICE')throw Error('STREAM_REFERENCE_INVALID');
         if(reference&&(cached.timestamp<reference.timestamp||cached.timestamp===reference.timestamp&&cached.price!==reference.price))throw Error('STREAM_REFERENCE_REGRESSED');
         reference=cached;
@@ -154,7 +154,7 @@ export function createBinanceTestnetAdapter(options: {
       const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
       try{validateTradeContext(context,symbol,now());for(const filter of percent)referenceForFilter(reference,filter,now());}
       catch(error){
-        if(options.referenceReader){annotateReferenceFailure(error,'CONTEXT_REFERENCE_VALIDATION');annotateReferenceBookRead(error,bookReadElapsedMs);}
+        if(options.referenceReader){annotateReferenceFailure(error,'CONTEXT_REFERENCE_VALIDATION');annotateReferenceBookRead(error,bookReadElapsedMs);annotateReferenceBookProgress(error,initialReference,quoteAt);}
         // Only a successful, valid but event-old reference gets one fresh read.
         // Never retry transport/HTTP errors, future timestamps or slow requests.
         if(options.referenceReader||!(error instanceof ReferencePriceFreshnessError)||reference?.kind!=='REFERENCE_PRICE'||error.timing.requestAgeMs===null||error.timing.requestAgeMs<0||error.timing.requestAgeMs>2000||error.timing.eventAgeMs===null||error.timing.eventAgeMs<=2000||units(reference.price)<=0n)throw error;
