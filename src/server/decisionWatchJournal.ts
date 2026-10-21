@@ -78,12 +78,13 @@ export class DecisionWatchJournal{
  close(){if(this.closed)return;this.closed=true;this.db.close();}
 }
 /** Read-only opening cannot create a missing file or finalize an interrupted writer. */
-export function readDecisionWatchHistory(file:string,limit=5,id?:string){
+export function readDecisionWatchHistory(file:string,limit=5,id?:string,includeObservations=false){
  if(!Number.isInteger(limit)||limit<1||limit>20)throw Error('DECISION_WATCH_HISTORY_INVALID');
  if(id!==undefined)sessionId(id);
  if(!fs.existsSync(file))throw Error('DECISION_WATCH_HISTORY_MISSING');
  const db=new DatabaseSync(file,{readOnly:true});
  try{
+  db.exec('BEGIN');
   const rows=(id?db.prepare('SELECT * FROM decision_sessions WHERE id=?').all(id):
    db.prepare('SELECT * FROM decision_sessions ORDER BY started_at DESC,id DESC LIMIT ?').all(limit)) as SessionRow[];
   return rows.map(row=>{
@@ -98,7 +99,7 @@ export function readDecisionWatchHistory(file:string,limit=5,id?:string){
     for(const key of Object.keys(expected) as (keyof typeof expected)[])if(key!=='persistedSession'&&JSON.stringify(expected[key])!==JSON.stringify(result[key]))throw Error('DECISION_WATCH_HISTORY_INVALID');
    }
    if(result.executionAuthorized!==false||result.ordersSubmitted!==0||result.automaticTradingEnabled!==false)throw Error('DECISION_WATCH_HISTORY_INVALID');
-   return {startedAt:row.started_at,summary:result,...(id?{observations}:{})};
+   return {startedAt:row.started_at,summary:result,...(id||includeObservations?{observations}:{})};
   });
- }finally{db.close();}
+ }finally{try{db.exec('ROLLBACK');}finally{db.close();}}
 }
