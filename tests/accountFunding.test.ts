@@ -1,3 +1,4 @@
+import {assertPrivateFile} from '../src/server/privateStorage';
 import {removeSnapshotFixtureCompanion} from './fixtures/durableSnapshot';
 import { rulesFixture, policyFixture, dailyEvidenceFixture } from './fixtures/trading';
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ const confirmation=(i:Intent,id:string,patch:Partial<Confirmation>={}):Confirmat
 function ledger(now=()=>1002){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'aq-capital-'));return {dir,file:path.join(dir,'capital'),book:new CapitalLedger(path.join(dir,'capital'),accountId,now)};}
 function cleanup(s:ReturnType<typeof ledger>){s.book.close();fs.rmSync(s.dir,{recursive:true,force:true});}
 test('free excludes locked; local holds use exact decimals and prevent double allocation',()=>{
- const s=ledger();try{s.book.reconcile(snapshot({balances:[{asset:'USDT',free:'100',locked:'50'}]}),[]);assert.equal(s.book.available('USDT'),'100');s.book.reserve(intent,[{asset:'USDT',amount:'60.000000000000000001'}]);assert.equal(s.book.available('USDT'),'39.999999999999999999');assert.throws(()=>s.book.reserve({...intent,requestId:'request_0002'},[{asset:'USDT',amount:'40'}]),/INSUFFICIENT/);assert.equal(fs.statSync(s.file).mode&0o777,0o600);}finally{cleanup(s);}
+ const s=ledger();try{s.book.reconcile(snapshot({balances:[{asset:'USDT',free:'100',locked:'50'}]}),[]);assert.equal(s.book.available('USDT'),'100');s.book.reserve(intent,[{asset:'USDT',amount:'60.000000000000000001'}]);assert.equal(s.book.available('USDT'),'39.999999999999999999');assert.throws(()=>s.book.reserve({...intent,requestId:'request_0002'},[{asset:'USDT',amount:'40'}]),/INSUFFICIENT/);assertPrivateFile(s.file);}finally{cleanup(s);}
 });
 test('restart never trusts old balances and retained orphan hold blocks readiness',()=>{
  const s=ledger();try{s.book.reconcile(snapshot(),[]);s.book.reserve(intent,[{asset:'USDT',amount:'200'}]);s.book.close();s.book=new CapitalLedger(s.file,accountId,()=>1002);assert.throws(()=>s.book.available('USDT'),/FRESH_ACCOUNT/);const result=s.book.reconcile(snapshot(),[]);assert.equal(result.ready,false);assert.match(result.problems[0],/RESERVATION_ORDER/);assert.throws(()=>s.book.reserve({...intent,requestId:'request_0002'},[{asset:'USDT',amount:'1'}]),/FRESH_ACCOUNT/);}finally{cleanup(s);}

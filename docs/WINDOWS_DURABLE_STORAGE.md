@@ -93,3 +93,15 @@ Kaynaklar:
 - https://www.sqlite.org/pragma.html#pragma_synchronous
 - https://nodejs.org/api/fs.html (Windows chmod sınırlamaları)
 - https://learn.microsoft.com/en-us/dotnet/api/system.security.accesscontrol.filesystemsecurity.setaccessruleprotection
+
+## Operatörün ilk Windows sonucu
+
+bcb5ee3 Windows üzerinde TypeScript kontrolünü geçti. Tam test çalıştırması:
+296 test, 293 başarılı, 3 başarısız, 0 atlanan; yaklaşık 91.6 saniye.
+Yeni kalıcılık/kurtarma testleri ve kasa ACL testi geçti.
+Kalan üç hata accountFunding, dailyRiskGate ve orderExecution testlerindeki
+`fs.statSync(s.file).mode & 0o777 === 0o600` beklentileriydi (Windows'ta 0666).
+Bu üç kontrol diğer izin testleri gibi assertPrivateFile(s.file) kullanır:
+Windows'ta gerçek korumalı DACL/sahiplik, POSIX'te 0600 kontrol edilir.
+Test atlanmadı ve izin beklentisi kaldırılmadı. Bu son üç değişikliğin cihazda
+yeniden doğrulanması bekleniyor; henüz 296/296 sonucu iddia edilmiyor.

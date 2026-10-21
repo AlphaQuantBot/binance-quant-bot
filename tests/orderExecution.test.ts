@@ -1,3 +1,4 @@
+import {assertPrivateFile} from '../src/server/privateStorage';
 import {removeSnapshotFixtureCompanion} from './fixtures/durableSnapshot';
 import {writeSnapshotFixture} from './fixtures/durableSnapshot';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ function clean(s:ReturnType<typeof setup>){s.engine.close();fs.rmSync(s.dir,{rec
 test('intent is durable before network; concurrent identical requests submit only once',async()=>{
  let calls=0,release!:()=>void;const wait=new Promise<void>(r=>release=r);
  const s=setup({submit:async(i,id)=>{calls++;assert.equal(JSON.parse(fs.readFileSync(s.file,'utf8')).orders[0].status,'SUBMITTING');await wait;return confirmed(i,id);},query:async()=>null});
- try{const first=s.engine.submit(intent);assert.equal((await s.engine.submit(intent)).status,'SUBMITTING');assert.throws(()=>s.engine.close(),/SUBMISSION/);release();assert.equal((await first).status,'NEW');assert.equal(calls,1);assert.equal(fs.statSync(s.file).mode&0o777,0o600);}finally{clean(s);}
+ try{const first=s.engine.submit(intent);assert.equal((await s.engine.submit(intent)).status,'SUBMITTING');assert.throws(()=>s.engine.close(),/SUBMISSION/);release();assert.equal((await first).status,'NEW');assert.equal(calls,1);assertPrivateFile(s.file);}finally{clean(s);}
 });
 test('lost response persists UNKNOWN, blocks new account orders and never retries on restart or absent query',async()=>{
  let calls=0;const adapter:Adapter={submit:async()=>{calls++;throw Error('timeout after exchange acceptance');},query:async()=>null};const s=setup(adapter);
