@@ -50,3 +50,48 @@ Kayıt boşlukları olan oturum kesintisiz izleme kanıtı sayılmaz.
 ve veri kaynağı bulunur. Emir sayısı her zaman sıfırdır. Sinyaller için
 varsayımsal dolum, getiri, ücret veya kârlılık uydurulmaz. Ana ağ ve otomatik
 emir yürütmesi kapalı kalır. Testnet likiditesi ana ağ performansı değildir.
+
+## Dakika hizalama ve oturum özeti
+
+Operatörün 60 gözleminde tüm sonuçlar HOLD idi. Başlangıçta önceki oturuma
+göre bir mum, 24–25. döngüler arasında ayrıca bir mum eksikti. Yalnızca bu
+çıktıyla kesintinin kesin nedeni belirlenemez.
+
+Yeni zamanlama, okuma bitiminden sonra sabit 60 saniye beklemek yerine
+sunucunun bir sonraki dakika sınırını ve 2 saniyelik yayın payını hedefler.
+Kline okuma, SQLite kaydı ve çıktı süresi beklemeden düşülür. Böylece normal
+okuma süreleri her döngüde birikmez. Ağ gecikmesi, bilgisayarın uyuması veya
+zamanlayıcı gecikmesi yine boşluk yaratabilir; kesintisizlik garanti edilmez.
+Eski mumları sonradan canlı gözlem gibi doldurmaz.
+
+Her oturum sonunda READ_ONLY_SIGNAL_SESSION_SUMMARY çıkar:
+- requestedCycles / completedCycles: istenen ve tamamlanan okumalar.
+- uniqueCandles / newlyRecorded / duplicateObservations: benzersiz mumlar,
+  yeni SQLite kayıtları ve aynı oturumda tekrar okunan mum sayısı.
+- signals: benzersiz gözlemler için BUY_CROSS, SELL_CROSS ve HOLD sayıları.
+- missedBeforeSession: ilk gözlemin önceki defter kaydına göre boşluğu.
+- missedWithinSession / gapEventsWithinSession: bu oturumda gözlemlenen
+  kapanışlar arasındaki eksik mumlar ve boşluk olayları.
+- continuousObservedSession: en az iki benzersiz gözlem var ve arada eksik
+  mum yok; istenen tüm döngülerin tamamlandığı anlamına gelmez.
+- state: COMPLETED, INTERRUPTED veya STOPPED. Ctrl+C ve hatada kısmi özet
+  üretilir; zorla süreç sonlandırma/güç kaybında özet garanti edilmez.
+
+Bir sonraki denemede yalnızca son özet bloğunu paylaşmak yeterlidir.
+İlk bekleme dakika hizasına göre değişir; sonraki normal okumalar dakika
+başlangıcından yaklaşık 2 saniye sonrasına hedeflenir.
+
+Doğrulama: 70 sanal saat/özet kontrolü ve 60 döngülük komut akışı simülasyonu
+çalıştırıldı (60 benzersiz mum, sıfır oturum içi kayıp). Bu düzenleme sırasında
+çalışma konteyneri yanıt vermediğinden tam Node test paketi, TypeScript ve
+üretim derlemesi tekrar çalıştırılamadı. Önceki sürümün 290 başarılı testi
+bu düzenlemenin tam doğrulaması olarak sunulmaz. Depoda yeni Node testleri
+eklendi; yerelde kontrol:
+
+```powershell
+npm.cmd run lint
+```
+
+```powershell
+npm.cmd run test:security
+```
