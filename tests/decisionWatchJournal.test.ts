@@ -95,8 +95,9 @@ test('watch CLI refuses to use the scoped journal itself as observation history 
   const child=spawnSync(process.execPath,['--import','tsx',script,'1'],{encoding:'utf8',timeout:15000,
    env:{...process.env,APP_TESTNET_SCOPED_JOURNAL:scoped}});
   assert.equal(child.error,undefined);assert.equal(child.status,1);
-  const line=child.stderr.trim().split('\n').findLast(value=>value.startsWith('{'));assert.ok(line);
-  assert.equal(JSON.parse(line).stopCode,'DECISION_WATCH_HISTORY_INVALID');
+  // Capture the complete pretty-printed JSON object, allowing surrounding Node warnings.
+  const output=child.stderr.match(/^\{[\s\S]*?^\}/m);assert.ok(output);
+  assert.equal(JSON.parse(output[0]).stopCode,'DECISION_WATCH_HISTORY_INVALID');
   assert.equal(fs.readFileSync(scoped,'utf8'),'scoped journal marker');assert.equal(fs.existsSync(scoped+'-wal'),false);
  }finally{f.clean();}
 });
