@@ -1,3 +1,4 @@
+import {TradeContextFreshnessError,type TradeContextTiming} from './tradeContextTiming';
 import {ReferenceClockError,type ReferenceClockDiagnostics} from './referenceClock';
 import {ReferenceStreamTimeoutError,type ReferenceStreamDiagnostics} from './testnetReferenceStream';
 import {ReferencePriceFreshnessError} from './priceReference';
@@ -7,14 +8,14 @@ export type DecisionWatchReport={assessment:string;candidate:string;signal?:stri
 export type DecisionWatchSample={report:DecisionWatchReport;serverTime:number;clockReceivedAt:number};
 type Dependencies={observe:(signal:AbortSignal)=>Promise<DecisionWatchSample>;wait:(ms:number,signal:AbortSignal)=>Promise<void>;
  monotonicNow:()=>number;record?:(report:DecisionWatchReport,cycle:number)=>void;emit:(report:DecisionWatchReport,cycle:number)=>void;errorCode:(error:unknown)=>string};
-export function summarizeDecisionWatch(reports:readonly DecisionWatchReport[],requestedCycles:number,attemptedCycles:number,state:string,stopCode:string|null,referenceTiming?:ReferencePriceFreshnessError['timing'],streamDiagnostics?:ReferenceStreamDiagnostics,clockDiagnostics?:ReferenceClockDiagnostics){
+export function summarizeDecisionWatch(reports:readonly DecisionWatchReport[],requestedCycles:number,attemptedCycles:number,state:string,stopCode:string|null,referenceTiming?:ReferencePriceFreshnessError['timing'],streamDiagnostics?:ReferenceStreamDiagnostics,clockDiagnostics?:ReferenceClockDiagnostics,contextTiming?:TradeContextTiming){
  const unique=new Map<number,DecisionWatchReport>();
  for(const r of reports)if(r.candleCloseTime!==undefined&&!unique.has(r.candleCloseTime))unique.set(r.candleCloseTime,r);
  const rows=[...unique.values()].sort((a,b)=>a.candleCloseTime!-b.candleCloseTime!);
  let missedWithinSession=0,gapEventsWithinSession=0;
  for(let i=1;i<rows.length;i++){const missed=Math.max(0,(rows[i].candleCloseTime!-rows[i-1].candleCloseTime!)/60000-1);
   if(missed){missedWithinSession+=missed;gapEventsWithinSession++;}}
- return {environment:'BINANCE_TESTNET',operation:'READ_ONLY_DECISION_WATCH_SUMMARY',state,stopCode,...(referenceTiming?{referenceTiming}:{}),...(streamDiagnostics?{streamDiagnostics}:{}),...(clockDiagnostics?{clockDiagnostics}:{}),
+ return {environment:'BINANCE_TESTNET',operation:'READ_ONLY_DECISION_WATCH_SUMMARY',state,stopCode,...(contextTiming?{contextTiming}:{}),...(referenceTiming?{referenceTiming}:{}),...(streamDiagnostics?{streamDiagnostics}:{}),...(clockDiagnostics?{clockDiagnostics}:{}),
   requestedCycles,attemptedCycles,completedCycles:reports.length,uniqueCandles:rows.length,
   duplicateObservations:reports.filter(r=>r.candleCloseTime!==undefined).length-rows.length,
   signals:{BUY_CROSS:rows.filter(r=>r.signal==='BUY_CROSS').length,SELL_CROSS:rows.filter(r=>r.signal==='SELL_CROSS').length,HOLD:rows.filter(r=>r.signal==='HOLD').length},
@@ -30,6 +31,7 @@ export function summarizeDecisionWatch(reports:readonly DecisionWatchReport[],re
 export async function runDecisionWatch(cycles:number,deps:Dependencies,stop:AbortSignal){
  if(!Number.isInteger(cycles)||cycles<1||cycles>120)throw Error('DECISION_WATCH_CYCLES_INVALID');
  const reports:DecisionWatchReport[]=[];let state='COMPLETED',stopCode:string|null=null,attempted=0;
+ let contextTiming:TradeContextTiming|undefined;
  let clockDiagnostics:ReferenceClockDiagnostics|undefined;
  let streamDiagnostics:ReferenceStreamDiagnostics|undefined;
  let referenceTiming:ReferencePriceFreshnessError['timing']|undefined;
@@ -57,6 +59,7 @@ export async function runDecisionWatch(cycles:number,deps:Dependencies,stop:Abor
    if(cycle<cycles)await deps.wait(nextSignalDelay(sample.serverTime,sample.clockReceivedAt,deps.monotonicNow()),stop);
   }
  }catch(error){
+  if(error instanceof TradeContextFreshnessError)contextTiming=error.contextTiming;
   if(error instanceof ReferenceClockError)clockDiagnostics=error.clockDiagnostics;
   if(error instanceof ReferenceStreamTimeoutError)streamDiagnostics=error.streamDiagnostics;
   if(error instanceof ReferencePriceFreshnessError)referenceTiming=error.timing;
@@ -64,5 +67,5 @@ export async function runDecisionWatch(cycles:number,deps:Dependencies,stop:Abor
   else{state='STOPPED';stopCode=error instanceof Error&&/^DECISION_WATCH_[A-Z_]+$/.test(error.message)?error.message:deps.errorCode(error);}
  }
  if(stop.aborted){state='INTERRUPTED';stopCode='OPERATOR_INTERRUPTED';}
- return summarizeDecisionWatch(reports,cycles,attempted,state,stopCode,referenceTiming,streamDiagnostics,clockDiagnostics);
+ return summarizeDecisionWatch(reports,cycles,attempted,state,stopCode,referenceTiming,streamDiagnostics,clockDiagnostics,contextTiming);
 }

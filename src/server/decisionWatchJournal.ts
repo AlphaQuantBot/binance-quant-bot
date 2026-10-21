@@ -66,7 +66,7 @@ export class DecisionWatchJournal{
    if(!s||!['COMPLETED','STOPPED','INTERRUPTED'].includes(summary.state)||summary.requestedCycles!==s.requested||
     !Number.isInteger(summary.attemptedCycles)||summary.attemptedCycles<summary.completedCycles||summary.attemptedCycles>s.requested||
     (summary.state==='COMPLETED'&&(summary.completedCycles!==s.requested||summary.stopCode!==null)))throw Error('DECISION_WATCH_HISTORY_INVALID');
-   const expected=summarizeDecisionWatch(reports(this.db,id),s.requested,summary.attemptedCycles,summary.state,summary.stopCode,summary.referenceTiming,summary.streamDiagnostics,summary.clockDiagnostics);
+   const expected=summarizeDecisionWatch(reports(this.db,id),s.requested,summary.attemptedCycles,summary.state,summary.stopCode,summary.referenceTiming,summary.streamDiagnostics,summary.clockDiagnostics,summary.contextTiming);
    for(const key of Object.keys(expected) as (keyof typeof expected)[])if(JSON.stringify(expected[key])!==JSON.stringify(summary[key]))throw Error('DECISION_WATCH_HISTORY_INVALID');
    const result={...expected,sessionId:id,persistedSession:true};
    const payload=JSON.stringify(result);
@@ -95,7 +95,7 @@ export function readDecisionWatchHistory(file:string,limit=5,id?:string,includeO
     if(result.sessionId!==row.id||result.persistedSession!==true||!['COMPLETED','STOPPED','INTERRUPTED'].includes(result.state)||
      result.requestedCycles!==row.requested||!Number.isInteger(result.attemptedCycles)||result.attemptedCycles<observations.length||result.attemptedCycles>row.requested||
      (result.state==='COMPLETED'&&(observations.length!==row.requested||result.stopCode!==null)))throw Error('DECISION_WATCH_HISTORY_INVALID');
-    const expected=summarizeDecisionWatch(observations,row.requested,result.attemptedCycles,result.state,result.stopCode,result.referenceTiming,result.streamDiagnostics,result.clockDiagnostics);
+    const expected=summarizeDecisionWatch(observations,row.requested,result.attemptedCycles,result.state,result.stopCode,result.referenceTiming,result.streamDiagnostics,result.clockDiagnostics,result.contextTiming);
     for(const key of Object.keys(expected) as (keyof typeof expected)[])if(key!=='persistedSession'&&JSON.stringify(expected[key])!==JSON.stringify(result[key]))throw Error('DECISION_WATCH_HISTORY_INVALID');
    }
    if(result.executionAuthorized!==false||result.ordersSubmitted!==0||result.automaticTradingEnabled!==false)throw Error('DECISION_WATCH_HISTORY_INVALID');
