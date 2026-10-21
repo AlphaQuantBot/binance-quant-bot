@@ -63,7 +63,7 @@ test('halt or newly stale signal overrides a previously plausible candidate befo
  assert.equal(reviewScopedSignalCandidate(s,audit(),evidence(),account(),context(),commission(),now).candidate,'NONE');
 });
 test('CLI still contains no submit/cancel/order-test, reservation or initialization call',()=>{
- const source=fs.readFileSync(new URL('../scripts/observe_scoped_decision.ts',import.meta.url),'utf8');
+ const source=fs.readFileSync(new URL('../scripts/observe_scoped_decision.ts',import.meta.url),'utf8')+fs.readFileSync(new URL('../src/server/scopedDecisionObservation.ts',import.meta.url),'utf8');
  assert.doesNotMatch(source,/\.(submit|cancel|validateTestOrder|prepare|prepareFirstBuy|prepareFirstSell|initialize)\s*\(/);
  assert.match(source,/decision.assessment==='CANDIDATE_ONLY'/);
 });

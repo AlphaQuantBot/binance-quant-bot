@@ -50,7 +50,7 @@ test('invalid or overcommitted amounts are blocked; insufficient scoped cash can
  const r=decideScopedSignal(signal('BUY_CROSS'),{...audit(),availableCashUSDT:'24.999999999999999999'},evidence(),now);assert.equal(r.candidate,'NONE');assert.ok(r.reasonCodes.includes('SCOPED_CASH_BELOW_PROPOSED_ORDER_CAP'));
 });
 test('operator command exposes no submit/cancel, loop, allocation reset or order-test capability',()=>{
- const source=fs.readFileSync(new URL('../scripts/observe_scoped_decision.ts',import.meta.url),'utf8');
+ const source=fs.readFileSync(new URL('../scripts/observe_scoped_decision.ts',import.meta.url),'utf8')+fs.readFileSync(new URL('../src/server/scopedDecisionObservation.ts',import.meta.url),'utf8');
  assert.doesNotMatch(source,/\.(submit|cancel|initialize|prepare|prepareFirstBuy|prepareFirstSell|beginFirstBuySend|beginFirstSellSend|validateTestOrder)\s*\(/);
  assert.doesNotMatch(source,/setInterval|setTimeout|while\s*\(/);
  assert.match(source,/if\(!fs.existsSync\(file\)\)throw Error\('SCOPED_NOT_INITIALIZED'\)/);
