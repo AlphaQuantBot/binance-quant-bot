@@ -29,7 +29,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   stream=referenceSession?referenceSession.get(referenceClock):new TestnetReferenceStream('BTCUSDT',Date.now,undefined,referenceClock);
   // Let the first stream event arrive before starting freshness-bounded account/context reads.
   await stream.warmup('BTCUSDT').catch(error=>{throw annotateReferenceFailure(error,'STARTUP_WARMUP');});
-  const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.read(s),referenceSnapshot:s=>stream!.snapshot(s)});
+  const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.readForBook(s),referenceSnapshot:s=>stream!.snapshot(s)});
   const reader={accountSnapshot:exchange.accountSnapshot,tradeContext:exchange.tradeContext};
   const [account,context]=await Promise.all([reader.accountSnapshot(),reader.tradeContext('BTCUSDT')]);
   const audit=journal.audit(account,context);
