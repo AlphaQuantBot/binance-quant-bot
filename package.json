@@ -31,7 +31,8 @@
     "testnet:sandbox-status": "node --import tsx scripts/scoped_testnet_capital.ts status",
     "testnet:sandbox-halt": "node --import tsx scripts/scoped_testnet_capital.ts halt",
     "testnet:sandbox-buy-once": "node --import tsx scripts/buy_testnet_once.ts",
-    "testnet:sandbox-sell-once": "node --import tsx scripts/sell_testnet_once.ts"
+    "testnet:sandbox-sell-once": "node --import tsx scripts/sell_testnet_once.ts",
+    "testnet:signals": "node --import tsx scripts/observe_testnet_signals.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
