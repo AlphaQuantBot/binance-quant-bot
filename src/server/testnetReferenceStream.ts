@@ -88,9 +88,9 @@ export class TestnetReferenceStream {
  }
  async read(symbol:string):Promise<PriceReference>{return this.readWithWait(symbol,4000);}
  /** Preparation only: reserve a bounded preparation budget within the unchanged 2000 ms final window. */
- async readForBook(symbol:string,reserveMs=1000):Promise<PriceReference>{
-  if(!Number.isSafeInteger(reserveMs)||reserveMs<1||reserveMs>=2000)throw Error('STREAM_REFERENCE_CONFIGURATION_INVALID');
-  return this.readWithWait(symbol,4000,undefined,2000-reserveMs);
+ async readForBook(symbol:string,reserveMs=1000,waitLimitMs=4000):Promise<PriceReference>{
+  if(!Number.isSafeInteger(reserveMs)||reserveMs<1||reserveMs>=2000||!Number.isSafeInteger(waitLimitMs)||waitLimitMs<1||waitLimitMs>4000)throw Error('STREAM_REFERENCE_CONFIGURATION_INVALID');
+  return this.readWithWait(symbol,waitLimitMs,undefined,2000-reserveMs);
  }
  private async readWithWait(symbol:string,waitLimitMs:number,waitPhase?:'STARTUP',maxEventAgeMs=2000):Promise<PriceReference>{
   if(symbol!==this.symbol)throw Error('STREAM_REFERENCE_SYMBOL_MISMATCH');

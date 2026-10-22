@@ -52,6 +52,7 @@ const allowed=new Set([
  'INVALID_OPEN_ORDER_TOTALS',
  'INVALID_TRADE_CONTEXT',
  'STALE_TRADE_CONTEXT',
+ 'TRADE_CONTEXT_BUDGET_EXHAUSTED',
  'INVALID_BOOK_QUOTE'
 ]);
 export function decisionObservationErrorCode(error:unknown){

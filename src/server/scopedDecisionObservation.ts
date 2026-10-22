@@ -1,4 +1,4 @@
-import {ReferenceBookBudget} from './referenceBookBudget';
+import {ReferenceBookBudget,referenceWaitWithinContext} from './referenceBookBudget';
 import {annotateReferenceFailure,type ReferenceFailurePhase} from './priceReference';
 import type {DecisionReferenceSession} from './decisionReferenceSession';
 import {sampleDecisionReferenceClock} from './decisionReferenceClock';
@@ -31,7 +31,7 @@ export async function observeScopedDecision(file:string,apiKey:string,secretKey:
   stream=referenceSession?referenceSession.get(referenceClock):new TestnetReferenceStream('BTCUSDT',Date.now,undefined,referenceClock);
   // Let the first stream event arrive before starting freshness-bounded account/context reads.
   await stream.warmup('BTCUSDT').catch(error=>{throw annotateReferenceFailure(error,'STARTUP_WARMUP');});
-  const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:s=>stream!.readForBook(s,bookBudget.reserveMs()),referenceSnapshot:s=>stream!.snapshot(s),onBookRead:ms=>bookBudget.record(ms)});
+  const exchange=createBinanceTestnetAdapter({apiKey,secretKey,fetcher,referenceReader:(s,startedAt)=>{const reserve=bookBudget.reserveMs();if(startedAt===undefined)throw Error('INVALID_CLOCK');return stream!.readForBook(s,reserve,referenceWaitWithinContext(startedAt,Date.now(),reserve));},referenceSnapshot:s=>stream!.snapshot(s),onBookRead:ms=>bookBudget.record(ms)});
   const reader={accountSnapshot:exchange.accountSnapshot,tradeContext:exchange.tradeContext};
   const [account,context]=await Promise.all([reader.accountSnapshot(),reader.tradeContext('BTCUSDT')]);
   const audit=journal.audit(account,context);
