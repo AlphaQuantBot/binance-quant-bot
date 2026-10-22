@@ -1,3 +1,4 @@
+import {validateMonitorChildren,validateMonitorSummary,type MonitorChild,type MonitorSummary} from './decisionMonitorSummary';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import fs from 'node:fs';
@@ -24,6 +25,7 @@ export class DecisionWatchJournal{
   try{
    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=0; PRAGMA foreign_keys=ON;');
    this.db.exec('CREATE TABLE IF NOT EXISTS decision_sessions(id TEXT PRIMARY KEY,requested INTEGER NOT NULL CHECK(requested BETWEEN 1 AND 120),started_at INTEGER NOT NULL,summary TEXT) STRICT; CREATE TABLE IF NOT EXISTS decision_reports(session_id TEXT NOT NULL REFERENCES decision_sessions(id),cycle INTEGER NOT NULL CHECK(cycle BETWEEN 1 AND 120),payload TEXT NOT NULL,PRIMARY KEY(session_id,cycle)) STRICT;');
+   this.db.exec('CREATE TABLE IF NOT EXISTS decision_monitors(id TEXT PRIMARY KEY,requested INTEGER NOT NULL CHECK(requested BETWEEN 1 AND 120),started_at INTEGER NOT NULL,summary TEXT) STRICT; CREATE TABLE IF NOT EXISTS decision_monitor_children(monitor_id TEXT NOT NULL REFERENCES decision_monitors(id),cycle INTEGER NOT NULL,session_id TEXT NOT NULL UNIQUE REFERENCES decision_sessions(id),status TEXT,PRIMARY KEY(monitor_id,cycle)) STRICT;');
    const mode=this.db.prepare('PRAGMA journal_mode').get() as {journal_mode:string};
    const sync=this.db.prepare('PRAGMA synchronous').get() as {synchronous:number};
    if(mode.journal_mode!=='wal'||sync.synchronous!==2)throw Error('durability settings unavailable');
@@ -75,6 +77,44 @@ export class DecisionWatchJournal{
    return result;
   });
  }
+
+ startMonitor(requested:number,startedAt=Date.now()){
+  if(!Number.isInteger(requested)||requested<1||requested>120||!Number.isSafeInteger(startedAt)||startedAt<=0)throw Error('DECISION_WATCH_HISTORY_INVALID');
+  const id=randomUUID();return this.transaction(()=>{this.db.prepare('INSERT INTO decision_monitors VALUES(?,?,?,NULL)').run(id,requested,startedAt);return id;});
+ }
+ startMonitorCycle(monitorId:string,startedAt=Date.now()){
+  sessionId(monitorId);if(!Number.isSafeInteger(startedAt)||startedAt<=0)throw Error('DECISION_WATCH_HISTORY_INVALID');
+  return this.transaction(()=>{
+   const parent=this.db.prepare('SELECT * FROM decision_monitors WHERE id=?').get(monitorId) as SessionRow|undefined;
+   const previous=this.db.prepare('SELECT cycle,status FROM decision_monitor_children WHERE monitor_id=? ORDER BY cycle DESC LIMIT 1').get(monitorId) as {cycle:number;status:string|null}|undefined;
+   if(!parent||parent.summary!==null||(previous&&!['OBSERVED','UNAVAILABLE'].includes(previous.status??''))||(previous?.cycle??0)>=parent.requested)throw Error('DECISION_WATCH_HISTORY_INVALID');
+   const id=randomUUID(),cycle=(previous?.cycle??0)+1;
+   this.db.prepare('INSERT INTO decision_sessions VALUES(?,1,?,NULL)').run(id,startedAt);
+   this.db.prepare('INSERT INTO decision_monitor_children VALUES(?,?,?,NULL)').run(monitorId,cycle,id);return id;
+  });
+ }
+ markMonitorCycle(monitorId:string,id:string,status:string){
+  sessionId(monitorId);sessionId(id);
+  this.transaction(()=>{
+   const parent=this.db.prepare('SELECT * FROM decision_monitors WHERE id=?').get(monitorId) as SessionRow|undefined;
+   const child=this.db.prepare('SELECT status FROM decision_monitor_children WHERE monitor_id=? AND session_id=?').get(monitorId,id) as {status:string|null}|undefined;
+   const row=this.db.prepare('SELECT summary FROM decision_sessions WHERE id=?').get(id) as {summary:string|null}|undefined;
+   if(!parent||parent.summary!==null||!child||child.status!==null||!row?.summary)throw Error('DECISION_WATCH_HISTORY_INVALID');
+   validateMonitorChildren([{cycle:1,sessionId:id,status,summary:JSON.parse(row.summary)}],1,true);
+   this.db.prepare('UPDATE decision_monitor_children SET status=? WHERE monitor_id=? AND session_id=?').run(status,monitorId,id);
+  });
+ }
+ finishMonitor(id:string,summary:MonitorSummary){
+  sessionId(id);return this.transaction(()=>{
+   const parent=this.db.prepare('SELECT * FROM decision_monitors WHERE id=?').get(id) as SessionRow|undefined;
+   if(!parent)throw Error('DECISION_WATCH_HISTORY_INVALID');
+   const children=monitorChildren(this.db,id);validateMonitorSummary(summary,children,parent.requested);
+   const result={...summary,monitorId:id,persistedSession:true},payload=JSON.stringify(result);
+   if(parent.summary!==null&&parent.summary!==payload)throw Error('DECISION_WATCH_HISTORY_INVALID');
+   this.db.prepare('UPDATE decision_monitors SET summary=? WHERE id=?').run(payload,id);return result;
+  });
+ }
+
  close(){if(this.closed)return;this.closed=true;this.db.close();}
 }
 /** Read-only opening cannot create a missing file or finalize an interrupted writer. */
@@ -115,4 +155,32 @@ export function readDecisionWatchHistory(file:string,limit=5,id?:string,includeO
 /** One read-only transaction; missing IDs fail the entire selection without partial analysis. */
 export function readDecisionWatchHistoryByIds(file:string,ids:readonly string[]){
  return readDecisionWatchHistory(file,1,undefined,true,ids);
+}
+
+function monitorChildren(db:DatabaseSync,id:string):MonitorChild[]{
+ return (db.prepare('SELECT c.cycle,c.session_id,c.status,s.summary,s.requested FROM decision_monitor_children c JOIN decision_sessions s ON s.id=c.session_id WHERE c.monitor_id=? ORDER BY c.cycle').all(id) as {cycle:number;session_id:string;status:string|null;summary:string|null;requested:number}[])
+ .map(c=>({cycle:c.cycle,sessionId:c.session_id,status:c.status,summary:c.summary?JSON.parse(c.summary):{state:'UNFINALIZED',requestedCycles:c.requested,completedCycles:0,executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false}}));
+}
+/** Read-only monitor manifest; old runs without manifests are not inferred. */
+export function readDecisionMonitor(file:string,id:string){
+ validateDecisionSessionIds([id]);if(!fs.existsSync(file))throw Error('DECISION_WATCH_HISTORY_MISSING');
+ const db=new DatabaseSync(file,{readOnly:true});
+ let parent:SessionRow,children:MonitorChild[];
+ try{
+  db.exec('BEGIN');
+  const table=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decision_monitors'").get();
+  if(!table)throw Error('DECISION_WATCH_HISTORY_MISSING');
+  const row=db.prepare('SELECT * FROM decision_monitors WHERE id=?').get(id) as SessionRow|undefined;
+  if(!row)throw Error('DECISION_WATCH_HISTORY_MISSING');parent=row;children=monitorChildren(db,id);
+ }finally{try{db.exec('ROLLBACK');}finally{db.close();}}
+ validateMonitorChildren(children,parent.requested,parent.summary!==null);
+ const rows=children.length?readDecisionWatchHistoryByIds(file,children.map(c=>c.sessionId)):[];
+ const checked=children.map((c,i)=>({...c,summary:rows[i].summary}));
+ validateMonitorChildren(checked,parent.requested,parent.summary!==null);
+ const summary=parent.summary?JSON.parse(parent.summary):{environment:'BINANCE_TESTNET',operation:'READ_ONLY_DECISION_MONITOR_SUMMARY',state:'UNFINALIZED',monitorId:id,requestedCycles:parent.requested,recordedCycles:children.length,childSessionIds:children.map(c=>c.sessionId),persistedSession:false,executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false};
+ if(parent.summary){
+  if(summary.monitorId!==id||summary.persistedSession!==true)throw Error('DECISION_WATCH_HISTORY_INVALID');
+  validateMonitorSummary(summary,checked,parent.requested);
+ }
+ return {startedAt:parent.started_at,summary,children:checked,observationsBySession:rows};
 }

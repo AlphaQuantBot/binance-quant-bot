@@ -21,15 +21,18 @@ async function main(){
  let journal:DecisionWatchJournal|undefined;
  try{
   journal=new DecisionWatchJournal(logFile);
+  const monitorId=journal.startMonitor(Number(text));
+  console.log(JSON.stringify({environment:'BINANCE_TESTNET',operation:'READ_ONLY_DECISION_MONITOR_STARTED',monitorId,executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false},null,2));
   const summary=await runDecisionMonitor(Number(text),{
    observe:signal=>observeScopedDecision(file,process.env.APP_TESTNET_API_KEY??'',process.env.APP_TESTNET_SECRET_KEY??'',signal,referenceSession),
    wait:async(ms,signal)=>{await delay(ms,undefined,{signal});},monotonicNow:()=>performance.now(),
-   begin:()=>journal!.start(1),record:(id,report)=>journal!.append(id,1,report),finish:(id,s)=>journal!.finish(id,s),
-   emit:(cycle,sessionId,status,summary)=>console.log(JSON.stringify({environment:'BINANCE_TESTNET',operation:'READ_ONLY_DECISION_MONITOR_CYCLE',
-    cycle,sessionId,status,summary,executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false},null,2)),
+   begin:()=>journal!.startMonitorCycle(monitorId),record:(id,report)=>journal!.append(id,1,report),finish:(id,s)=>journal!.finish(id,s),
+   emit:(cycle,sessionId,status,summary)=>{journal!.markMonitorCycle(monitorId,sessionId,status);console.log(JSON.stringify({environment:'BINANCE_TESTNET',operation:'READ_ONLY_DECISION_MONITOR_CYCLE',
+    cycle,sessionId,status,summary,executionAuthorized:false,ordersSubmitted:0,automaticTradingEnabled:false},null,2));},
    errorCode:decisionObservationErrorCode
   },stop.signal);
-  console.log(JSON.stringify(summary,null,2));if(summary.state==='STOPPED')process.exitCode=1;
+  const persisted=journal.finishMonitor(monitorId,summary);
+  console.log(JSON.stringify(persisted,null,2));if(summary.state==='STOPPED')process.exitCode=1;
  }finally{try{journal?.close();}finally{referenceSession.close();process.off('SIGINT',shutdown);process.off('SIGTERM',shutdown);}}
 }
 main().catch(error=>{
