@@ -2,10 +2,10 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {TestnetReferenceStream,ReferenceStreamTimeoutError} from '../src/server/testnetReferenceStream';
 import {ReferencePriceFreshnessError} from '../src/server/priceReference';
-class Socket extends EventTarget{readyState=1;close(){}emit(timestamp:number,r:string|null='100'){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({e:'referencePrice',s:'BTCUSDT',r,t:timestamp})}));}}
+class Socket extends EventTarget{readyState:0|1|2|3=1;close(){}emit(timestamp:number,r:string|null='100'){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({e:'referencePrice',s:'BTCUSDT',r,t:timestamp})}));}}
 test('silent wait reports client socket state and total idle time including time before the wait',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});
- for(const state of [1,2,3]){
+ for(const state of [1,2,3] as const){
   let mono=1000;const socket=new Socket(),feed=new TestnetReferenceStream('BTCUSDT',()=>10000,()=>socket,undefined,()=>mono);
   try{
    socket.emit(7000);mono=6000;socket.readyState=state;
