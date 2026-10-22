@@ -10,8 +10,8 @@ function codes(value:unknown):string[]{
 function increment(target:Map<string,number>,values:string[]){for(const value of values)target.set(value,(target.get(value)??0)+1);}
 function counts(target:Map<string,number>){return Object.fromEntries([...target].sort(([a],[b])=>a.localeCompare(b)));}
 /** Recorded evidence only: no price lookup, fill simulation or executable intent. */
-export function analyzeDecisionHistory(history:readonly History[]){
- if(!Array.isArray(history)||history.length>20)return fail();
+export function analyzeDecisionHistory(history:readonly History[],selection:'RECENT'|'EXPLICIT_IDS'='RECENT'){
+ if(!['RECENT','EXPLICIT_IDS'].includes(selection)||!Array.isArray(history)||history.length>(selection==='EXPLICIT_IDS'?120:20))return fail();
  const ids=new Set<string>(),candles=new Map<number,{inputHash:string;signal:string}>();
  const uniqueBuy=new Set<number>(),uniqueSell=new Set<number>(),reviewed=new Set<number>();
  const reasonCounts=new Map<string,number>(),blockerCounts=new Map<string,number>(),stopCounts=new Map<string,number>();
