@@ -1,4 +1,4 @@
-export type TradeContextTiming={contextAgeMs:number|null;quoteAgeMs:number|null;beforeQuoteMs:number|null;contextLimitMs:5000;quoteLimitMs:2000;reasons:string[]};
+export type TradeContextTiming={contextAgeMs:number|null;quoteAgeMs:number|null;beforeQuoteMs:number|null;contextLimitMs:5000;quoteLimitMs:2000;reasons:string[];collectionPhases?:{metadataReadElapsedMs:number|null;referenceWaitElapsedMs:number|null;bookReadElapsedMs:number|null}};
 /** Fixed codes and durations only; never retain the context payload or timestamps. */
 export class TradeContextFreshnessError extends Error{
  readonly contextTiming:TradeContextTiming;
@@ -17,4 +17,13 @@ export class TradeContextFreshnessError extends Error{
   if(quoteAgeMs!==null&&quoteAgeMs>2000)reasons.push('QUOTE_TOO_OLD');
   this.contextTiming={contextAgeMs,quoteAgeMs,beforeQuoteMs,contextLimitMs:5000,quoteLimitMs:2000,reasons};
  }
+}
+
+/** Attach only local duration measurements to the original typed failure. */
+export function annotateTradeContextPhases(error:unknown,metadataReadElapsedMs:number,referenceWaitElapsedMs:number,bookReadElapsedMs:number){
+ if(error instanceof TradeContextFreshnessError&&error.contextTiming.collectionPhases===undefined){
+  const safe=(v:number)=>Number.isFinite(v)&&v>=0&&v<=Number.MAX_SAFE_INTEGER?v:null;
+  error.contextTiming.collectionPhases={metadataReadElapsedMs:safe(metadataReadElapsedMs),referenceWaitElapsedMs:safe(referenceWaitElapsedMs),bookReadElapsedMs:safe(bookReadElapsedMs)};
+ }
+ return error;
 }

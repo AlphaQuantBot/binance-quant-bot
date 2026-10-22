@@ -1,3 +1,4 @@
+import {annotateTradeContextPhases} from './tradeContextTiming';
 import {normalizeValuationMarks,type ValuationMark} from './valuationMarks';
 import {backfillTrades,type TradeHistoryWindow} from './tradeBackfill';
 import {normalizeCommission,type CommissionSnapshot} from './commissionRates';
@@ -100,11 +101,13 @@ export function createBinanceTestnetAdapter(options: {
     async tradeContext(symbol) {
       if(!/^[A-Z0-9]{5,24}$/.test(symbol))throw Error('INVALID_SYMBOL');
       const startedAt=now();
+      const metadataStartedAt=performance.now();
       const info=object(await request('GET','/api/v3/exchangeInfo',{symbol},false,false));
       if(!Array.isArray(info.symbols)||info.symbols.length!==1||info.symbols[0]?.symbol!==symbol)throw Error('INVALID_EXCHANGE_INFO');
       const r=object(info.symbols[0]);
       if(!Array.isArray(r.filters))throw Error('INVALID_EXCHANGE_INFO');
       const percent=r.filters.filter((f:any)=>['PERCENT_PRICE','PERCENT_PRICE_BY_SIDE'].includes(f?.filterType));
+      const metadataReadElapsedMs=performance.now()-metadataStartedAt,referenceStartedAt=performance.now();
       const referencePromise=(async()=>{
       let reference:PriceReference|undefined;
       if(percent.length&&options.referenceReader){
@@ -135,6 +138,7 @@ export function createBinanceTestnetAdapter(options: {
       })();
       // With a warmed stream, obtain its current event before requesting a fresh book.
       if(options.referenceReader)await referencePromise;
+      const referenceWaitElapsedMs=options.referenceReader?performance.now()-referenceStartedAt:0;
       const quoteAt=now(),bookStartedAt=performance.now();
       // Read independent reference and book concurrently, retaining original request timestamps.
       const [initialReference,book]=await Promise.all([referencePromise,request('GET','/api/v3/ticker/bookTicker',{symbol},false,false)]);
@@ -155,6 +159,7 @@ export function createBinanceTestnetAdapter(options: {
       const context:TradeContext={environment:'BINANCE_TESTNET',symbol,baseAsset:r.baseAsset,quoteAsset:r.quoteAsset,status:r.status,spotAllowed:r.isSpotTradingAllowed,orderTypes:r.orderTypes,filters:r.filters,exchangeFilters:info.exchangeFilters,...(reference?{reference}:{}),startedAt,quote:{bid:q.bidPrice,ask:q.askPrice,bidQty:q.bidQty,askQty:q.askQty,observedAt:quoteAt}};
       try{validateTradeContext(context,symbol,now());for(const filter of percent)referenceForFilter(reference,filter,now());}
       catch(error){
+        annotateTradeContextPhases(error,metadataReadElapsedMs,referenceWaitElapsedMs,bookReadElapsedMs);
         if(options.referenceReader){annotateReferenceFailure(error,'CONTEXT_REFERENCE_VALIDATION');annotateReferenceBookRead(error,bookReadElapsedMs);annotateReferenceBookProgress(error,initialReference,quoteAt);}
         // Only a successful, valid but event-old reference gets one fresh read.
         // Never retry transport/HTTP errors, future timestamps or slow requests.
