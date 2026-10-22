@@ -4,11 +4,15 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 const aclScript = String.raw`
 $ErrorActionPreference='Stop'
+[Console]::Error.WriteLine('AQ_ACL_STAGE:START')
 $p=$env:AQ_PRIVATE_STORAGE_PATH
+[Console]::Error.WriteLine('AQ_ACL_STAGE:GET_ITEM')
 $item=Get-Item -LiteralPath $p -Force
 if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse point' }
+[Console]::Error.WriteLine('AQ_ACL_STAGE:IDENTITY')
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
 $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+[Console]::Error.WriteLine('AQ_ACL_STAGE:BUILD_ACL')
 if ($env:AQ_PRIVATE_STORAGE_APPLY -eq '1') {
  if ($item.PSIsContainer) {
   $acl=[Security.AccessControl.DirectorySecurity]::new()
@@ -23,16 +27,20 @@ if ($env:AQ_PRIVATE_STORAGE_APPLY -eq '1') {
   $rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
   [void]$acl.AddAccessRule($rule)
  }
+ [Console]::Error.WriteLine('AQ_ACL_STAGE:SET_ACL')
  Set-Acl -LiteralPath $p -AclObject $acl
 }
+[Console]::Error.WriteLine('AQ_ACL_STAGE:GET_ACL')
 $acl=Get-Acl -LiteralPath $p
 if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner or inheritance' }
+[Console]::Error.WriteLine('AQ_ACL_STAGE:VERIFY')
 $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
 if ($rules.Count -ne 2) { throw 'unexpected rules' }
 foreach ($identity in @($sid,$system)) {
  $matching=@($rules | Where-Object { $_.IdentityReference.Value -eq $identity.Value -and $_.AccessControlType -eq 'Allow' -and -not $_.IsInherited -and (($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl) })
  if ($matching.Count -ne 1) { throw 'rights' }
 }
+[Console]::Error.WriteLine('AQ_ACL_STAGE:DONE')
 Write-Output 'AQ_PRIVATE_OK'
 `;
 function windowsAcl(file:string,apply:boolean){

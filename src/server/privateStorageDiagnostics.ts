@@ -1,13 +1,16 @@
-export type PrivateStorageAclDiagnostics={failure:'TIMEOUT'|'START_FAILED'|'PROCESS_FAILED'|'UNEXPECTED_OUTPUT';exitStatus:number|null;elapsedMs:number|null};
+export type AclCheckpoint='START'|'GET_ITEM'|'IDENTITY'|'BUILD_ACL'|'SET_ACL'|'GET_ACL'|'VERIFY'|'DONE';
+export type PrivateStorageAclDiagnostics={failure:'TIMEOUT'|'START_FAILED'|'PROCESS_FAILED'|'UNEXPECTED_OUTPUT';exitStatus:number|null;elapsedMs:number|null;checkpoint?:AclCheckpoint};
 export class PrivateStorageAclError extends Error{
  readonly aclDiagnostics:PrivateStorageAclDiagnostics;
  constructor(diagnostics:PrivateStorageAclDiagnostics){super('PRIVATE_STORAGE_ACL_UNCONFIRMED');this.aclDiagnostics={...diagnostics};}
 }
 /** Keep subprocess output and errors private; expose only a fixed category and numbers. */
-export function confirmWindowsAclResult(result:{error?:unknown;status:number|null;stdout:string},elapsedMs:number){
+export function confirmWindowsAclResult(result:{error?:unknown;status:number|null;stdout:string;stderr?:string},elapsedMs:number){
  if(!result.error&&result.status===0&&result.stdout.trim()==='AQ_PRIVATE_OK')return;
  const code=result.error&&typeof result.error==='object'&&'code' in result.error?(result.error as {code:unknown}).code:undefined;
  const failure:PrivateStorageAclDiagnostics['failure']=code==='ETIMEDOUT'?'TIMEOUT':result.error?'START_FAILED':result.status!==0?'PROCESS_FAILED':'UNEXPECTED_OUTPUT';
- throw new PrivateStorageAclError({failure,exitStatus:Number.isSafeInteger(result.status)?result.status:null,
+ const stages=typeof result.stderr==='string'?[...result.stderr.matchAll(/^AQ_ACL_STAGE:(START|GET_ITEM|IDENTITY|BUILD_ACL|SET_ACL|GET_ACL|VERIFY|DONE)\r?$/gm)]:[];
+ const checkpoint=stages.at(-1)?.[1] as AclCheckpoint|undefined;
+ throw new PrivateStorageAclError({failure,...(checkpoint?{checkpoint}:{}),exitStatus:Number.isSafeInteger(result.status)?result.status:null,
   elapsedMs:Number.isFinite(elapsedMs)&&elapsedMs>=0?elapsedMs:null});
 }

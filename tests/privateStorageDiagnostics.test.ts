@@ -22,3 +22,10 @@ test('timeout, start failure, nonzero exit and unexpected output remain distinct
   assert.equal(error.aclDiagnostics.elapsedMs,15000);return true;
  });
 });
+
+test('only fixed script checkpoints are extracted and unrelated stderr is never exposed',()=>{
+ assert.throws(()=>confirmWindowsAclResult({status:null,stdout:'',stderr:'private path and SID\nAQ_ACL_STAGE:GET_ACL\nprivate error',error:{code:'ETIMEDOUT'}},15000),(error:unknown)=>{
+  assert.ok(error instanceof PrivateStorageAclError);assert.equal(error.aclDiagnostics.checkpoint,'GET_ACL');
+  assert.ok(!JSON.stringify(error).includes('private'));return true;
+ });
+});
