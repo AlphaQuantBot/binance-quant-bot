@@ -1,0 +1,62 @@
+name: Windows validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-validation:
+    name: Windows lint and security tests
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.22.0'
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm.cmd --version
+
+      - name: Install dependencies
+        run: |
+          if (Test-Path -LiteralPath package-lock.json) {
+            npm.cmd ci --no-audit --no-fund
+          } else {
+            npm.cmd install --no-audit --no-fund
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: TypeScript lint
+        run: npm.cmd run lint
+
+      - name: Security tests
+        timeout-minutes: 15
+        run: npm.cmd run test:security
+
+      - name: Preserve resolved dependency lock
+        if: ${{ always() && hashFiles('package-lock.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-dependency-lock
+          path: package-lock.json
+          retention-days: 7
+          if-no-files-found: error
