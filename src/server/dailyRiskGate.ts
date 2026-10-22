@@ -1,3 +1,4 @@
+import {commitSnapshotMirror,readSnapshot,snapshotExists} from './durableSnapshot';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,8 +19,8 @@ export class DailyRiskGate {
   private fd:number;private state?:DayState;private halted=false;private closed=false;private released=false;
   constructor(private file:string,private accountId:string){
     fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});this.fd=fs.openSync(file+'.lock','wx',0o600);
-    try{if(fs.existsSync(file)){
-      const data=JSON.parse(fs.readFileSync(file,'utf8'));
+    try{if(snapshotExists(file)){
+      const data=readSnapshot(file);
       if(data.version!==1||data.accountId!==accountId||typeof data.halted!=='boolean')throw Error('INVALID_DAILY_RISK_JOURNAL');
       this.halted=data.halted;
       if(data.state){const d=data.state;
@@ -30,7 +31,7 @@ export class DailyRiskGate {
   }
   private persist(){
     const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;
-    try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,halted:this.halted,state:this.state}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}}
+    try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,halted:this.halted,state:this.state}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;commitSnapshotMirror(tmp,this.file);}
     catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}
   }
   private open(){if(this.closed)throw Error('DAILY_RISK_JOURNAL_CLOSED');}

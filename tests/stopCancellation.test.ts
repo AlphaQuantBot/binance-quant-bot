@@ -1,3 +1,4 @@
+import {writeSnapshotFixture} from './fixtures/durableSnapshot';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ test('adapter DELETE is signed, fixed-host, single-order; query accepts only bou
  await a.cancel!(intent,cid,'12',alias);const c=await a.query(intent,cid,{orderId:'12',clientOrderId:alias});assert.equal(c?.clientOrderId,cid);assert.equal(c?.status,'CANCELED');assert.equal(calls,2);
 });
 test('crash with REQUESTING on disk recovers UNKNOWN without cancel replay',()=>fixture(async file=>{
- let cid='',deletes=0;const a:Adapter={submit:async(i,id)=>{cid=id;return conf(id);},cancel:async()=>{deletes++;},query:async()=>null};let e=new OrderExecution(file,a);await e.submit(intent);e.close();const saved=JSON.parse(fs.readFileSync(file,'utf8'));saved.orders[0].cancelState='REQUESTING';fs.writeFileSync(file,JSON.stringify(saved));e=new OrderExecution(file,a);try{assert.equal(e.list()[0].cancelState,'UNKNOWN');await e.cancelStop(intent.requestId);await e.reconcile(intent.requestId);assert.equal(deletes,0);}finally{e.close();}
+ let cid='',deletes=0;const a:Adapter={submit:async(i,id)=>{cid=id;return conf(id);},cancel:async()=>{deletes++;},query:async()=>null};let e=new OrderExecution(file,a);await e.submit(intent);e.close();const saved=JSON.parse(fs.readFileSync(file,'utf8'));saved.orders[0].cancelState='REQUESTING';writeSnapshotFixture(file,saved);e=new OrderExecution(file,a);try{assert.equal(e.list()[0].cancelState,'UNKNOWN');await e.cancelStop(intent.requestId);await e.reconcile(intent.requestId);assert.equal(deletes,0);}finally{e.close();}
 }));
 test('unrelated cancellation alias and order ID cannot resolve a retained cancellation',async()=>{
  const cid='aq_'+'a'.repeat(32),alias='ac_'+'b'.repeat(32);

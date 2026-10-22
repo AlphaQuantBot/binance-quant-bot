@@ -1,3 +1,4 @@
+import {commitSnapshotMirror,readSnapshot,snapshotExists} from './durableSnapshot';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -28,8 +29,8 @@ export class CapitalLedger {
     fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
     this.fd=fs.openSync(file+'.lock','wx',0o600);
     try {
-      if (fs.existsSync(file)) {
-        const data = JSON.parse(fs.readFileSync(file,'utf8'));
+      if (snapshotExists(file)) {
+        const data = readSnapshot(file);
         if (data.version !== 1 || data.accountId !== accountId || !Array.isArray(data.holds)) throw Error('INVALID_CAPITAL_JOURNAL');
         const seen = new Set<string>();
         this.holds = data.holds.map((h:Hold) => {
@@ -45,7 +46,7 @@ export class CapitalLedger {
     const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;
     try {
       fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,holds:this.holds}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;
-      fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
+      commitSnapshotMirror(tmp,this.file);
     }catch(e){this.closed=true;this.snapshot=undefined;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}
   }
   invalidate() {this.snapshot=undefined;}

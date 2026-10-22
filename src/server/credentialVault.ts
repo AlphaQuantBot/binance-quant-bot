@@ -1,3 +1,4 @@
+import {assertPrivateFile,protectPrivateStorage} from './privateStorage';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
@@ -13,6 +14,7 @@ export function createCredentialVault(file: string, keyHex?: string) {
     configured: !!key,
     load(): ExchangeCredentials | null {
       if (!key || !fs.existsSync(file)) return null;
+      assertPrivateFile(file);
       const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (payload.version !== 1) throw new Error('Unsupported vault');
       const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(payload.iv, 'hex'));
@@ -26,7 +28,7 @@ export function createCredentialVault(file: string, keyHex?: string) {
       const data = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
       const payload = JSON.stringify({ version: 1, iv: iv.toString('hex'), tag: cipher.getAuthTag().toString('hex'), data: data.toString('hex') });
       const temp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
-      try { fs.writeFileSync(temp, payload, { mode: 0o600, flag: 'wx' }); fs.renameSync(temp, file); }
+      try { fs.writeFileSync(temp, payload, { mode: 0o600, flag: 'wx' }); protectPrivateStorage(temp); fs.renameSync(temp, file); }
       finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
     },
     clear() { if (fs.existsSync(file)) fs.unlinkSync(file); },

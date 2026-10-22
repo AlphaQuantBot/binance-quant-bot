@@ -1,3 +1,4 @@
+import {commitSnapshotMirror,readSnapshot,snapshotExists} from './durableSnapshot';
 import {units} from './exactDecimal';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +38,7 @@ export class ObservedIntervalAudit{
  constructor(private file:string,private accountId:string,symbols:string[],private lagMs:number,private recover:(s:{symbol:string;startTime:number;endTime:number})=>Promise<Recovered>,private lookup:(symbol:string)=>Promise<Pair>,private now=Date.now){
   if(!/^testnet_[a-f0-9]{24}$/.test(accountId)||!Array.isArray(symbols)||!symbols.length||symbols.length>10||new Set(symbols).size!==symbols.length||symbols.some(s=>typeof s!=='string'||!/^[A-Z0-9]{5,24}$/.test(s))||!Number.isSafeInteger(lagMs)||lagMs<30000)throw Error('INVALID_INTERVAL_AUDIT_CONFIG');this.symbols=[...symbols].sort();
   fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});this.fd=fs.openSync(file+'.lock','wx',0o600);
-  try{if(fs.existsSync(file)){const d=JSON.parse(fs.readFileSync(file,'utf8'));if(d.version!==1||d.accountId!==accountId||JSON.stringify(d.symbols)!==JSON.stringify(this.symbols)||d.lagMs!==lagMs)throw Error('INVALID_INTERVAL_AUDIT_JOURNAL');
+  try{if(snapshotExists(file)){const d=readSnapshot(file);if(d.version!==1||d.accountId!==accountId||JSON.stringify(d.symbols)!==JSON.stringify(this.symbols)||d.lagMs!==lagMs)throw Error('INVALID_INTERVAL_AUDIT_JOURNAL');
    if(d.baseline)validateCheckpoint(d.baseline,accountId);
    if(d.pending){if(!d.baseline||!Array.isArray(d.pending.reports)||!Array.isArray(d.pending.pairs)||d.pending.reports.length!==d.pending.pairs.length||d.pending.reports.length>this.symbols.length||(d.pending.blocked!==undefined&&typeof d.pending.blocked!=='boolean'))throw Error('INVALID_PENDING_INTERVAL');validateCheckpoint(d.pending.after,accountId);if(d.pending.after.startedAt<=d.baseline.observedAt)throw Error('INVALID_PENDING_INTERVAL');
     let activity:ActivitySnapshot={trades:[],unresolved:[]};for(let i=0;i<d.pending.reports.length;i++){const r=d.pending.reports[i],p=d.pending.pairs[i];if(r.symbol!==this.symbols[i]||p.symbol!==r.symbol||r.startTime!==d.baseline.startedAt||r.endTime!==d.pending.after.observedAt)throw Error('INVALID_PENDING_INTERVAL');activity=mergeRecoveredActivity(activity,r,p,accountId).activity;}
@@ -47,7 +48,7 @@ export class ObservedIntervalAudit{
    if(this.pending?.blocked){if(this.pending.reports.length!==this.symbols.length)throw Error('INVALID_BLOCKED_INTERVAL');this.lastAudit=reconcileObservedInterval(this.baseline!,this.pending.after,this.pending.reports,this.pending.pairs,accountId);if(this.lastAudit.state==='MATCHED_SCOPED_INTERVAL')throw Error('INVALID_BLOCKED_INTERVAL');}
   }}catch(e){fs.closeSync(this.fd);fs.unlinkSync(file+'.lock');throw e;}
  }
- private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,symbols:this.symbols,lagMs:this.lagMs,baseline:this.baseline,pending:this.pending,lastAudit:this.lastAudit}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
+ private persist(){const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,accountId:this.accountId,symbols:this.symbols,lagMs:this.lagMs,baseline:this.baseline,pending:this.pending,lastAudit:this.lastAudit}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;commitSnapshotMirror(tmp,this.file);}catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
  capture(sample:Valuation){
   if(this.closed)throw Error('INTERVAL_AUDIT_CLOSED');if(this.busy)throw Error('INTERVAL_AUDIT_BUSY');
   if(!sample?.complete||sample.environment!=='BINANCE_TESTNET'||sample.currentEquityUSDT===null||sample.issues.length||sample.unpricedAssets.length||this.now()<sample.observedAt||this.now()-sample.observedAt>2000)throw Error('FRESH_COMPLETE_INTERVAL_SAMPLE_REQUIRED');

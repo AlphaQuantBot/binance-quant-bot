@@ -1,3 +1,4 @@
+import {TradeContextFreshnessError} from './tradeContextTiming';
 import { validatePercentPrice, type PriceReference } from './priceReference';
 import { units, decimal } from './exactDecimal';
 import { validateAccountSnapshot, type AccountSnapshot } from './accountSnapshot';
@@ -25,7 +26,7 @@ export function limitNotional(intent:Intent) {
 function int(value:unknown) {if(!Number.isSafeInteger(value)||Number(value)<0)throw Error('INVALID_FILTER_LIMIT');return Number(value);}
 export function validateTradeContext(c:TradeContext, symbol:string, now:number) {
   if(!c||c.environment!=='BINANCE_TESTNET'||c.symbol!==symbol||typeof c.baseAsset!=='string'||typeof c.quoteAsset!=='string'||!/^[A-Z0-9]{1,24}$/.test(c.baseAsset)||!/^[A-Z0-9]{1,24}$/.test(c.quoteAsset)||c.baseAsset===c.quoteAsset||c.baseAsset+c.quoteAsset!==symbol||typeof c.spotAllowed!=='boolean'||!Array.isArray(c.orderTypes)||!Array.isArray(c.filters)||!Array.isArray(c.exchangeFilters))throw Error('INVALID_TRADE_CONTEXT');
-  if(!Number.isSafeInteger(now)||!Number.isSafeInteger(c.startedAt)||!Number.isSafeInteger(c.quote?.observedAt)||c.startedAt<=0||c.startedAt>c.quote.observedAt||c.quote.observedAt>now||now-c.startedAt>5000||now-c.quote.observedAt>2000)throw Error('STALE_TRADE_CONTEXT');
+  if(!Number.isSafeInteger(now)||!Number.isSafeInteger(c.startedAt)||!Number.isSafeInteger(c.quote?.observedAt)||c.startedAt<=0||c.startedAt>c.quote.observedAt||c.quote.observedAt>now||now-c.startedAt>5000||now-c.quote.observedAt>2000)throw new TradeContextFreshnessError(c.startedAt,c.quote?.observedAt,now);
   if(units(c.quote.bid)<=0n||units(c.quote.ask)<units(c.quote.bid)||units(c.quote.bidQty)<=0n||units(c.quote.askQty)<=0n)throw Error('INVALID_BOOK_QUOTE');
 }
 /** No rounding up quantities or changing requested price. Unsupported relevant filters fail closed. */

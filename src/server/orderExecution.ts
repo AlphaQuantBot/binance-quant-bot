@@ -1,3 +1,4 @@
+import {commitSnapshotMirror,readSnapshot,snapshotExists} from './durableSnapshot';
 import { units as amount } from './exactDecimal';
 import { validateSettlement, type Settlement } from './tradeSettlement';
 import fs from 'node:fs';
@@ -20,13 +21,13 @@ const cancelId=(client:string)=>'ac_'+createHash('sha256').update(client).digest
 const clientId=(i:Intent)=>'aq_'+createHash('sha256').update(fingerprint(i)).digest('hex').slice(0,32);
 /** Single operator/process journal; stale locks require manual recovery. No exchange adapter is enabled. */
 export class OrderExecution {
-  private rows:Record[]=[]; private closed=false; private fd:number; private inFlight=0;
+  private rows:Record[]=[]; private closed=false; private released=false; private fd:number; private inFlight=0;
   constructor(private file:string,private adapter:Adapter){
     fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
     this.fd=fs.openSync(file+'.lock','wx',0o600);
     try {
-      if(fs.existsSync(file)) {
-        const data=JSON.parse(fs.readFileSync(file,'utf8'));
+      if(snapshotExists(file)) {
+        const data=readSnapshot(file);
         if(data.version!==1||!Array.isArray(data.orders))throw Error('INVALID_JOURNAL');
         const ids=new Set<string>();
         this.rows=data.orders.map((r:Record)=>{
@@ -44,7 +45,7 @@ export class OrderExecution {
     const tmp=this.file+'.'+randomUUID()+'.tmp';let fd:number|undefined;
     try{
       fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify({version:1,orders:this.rows}));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;
-      fs.renameSync(tmp,this.file);const dir=fs.openSync(path.dirname(this.file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
+      commitSnapshotMirror(tmp,this.file);
     }catch(e){this.closed=true;throw e;}finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}
   }
   list(){this.open();return structuredClone(this.rows);}
@@ -105,5 +106,5 @@ export class OrderExecution {
       return structuredClone(r);
     }finally{this.inFlight--;}
   }
-  close(){if(this.inFlight>0)throw Error('RECONCILIATION_IN_PROGRESS');if(this.rows.some(r=>r.status==='SUBMITTING'))throw Error('SUBMISSION_IN_PROGRESS');fs.closeSync(this.fd);fs.unlinkSync(this.file+'.lock');this.closed=true;}
+  close(){if(this.released)return;if(this.inFlight>0)throw Error('RECONCILIATION_IN_PROGRESS');if(!this.closed&&this.rows.some(r=>r.status==='SUBMITTING'))throw Error('SUBMISSION_IN_PROGRESS');fs.closeSync(this.fd);fs.unlinkSync(this.file+'.lock');this.closed=true;this.released=true;}
 }

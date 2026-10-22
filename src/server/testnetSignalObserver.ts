@@ -11,13 +11,13 @@ export async function readSignalCandles(fetcher:typeof fetch=fetch){
   if(!response.ok)throw Error([418,429].includes(response.status)?'SIGNAL_RATE_LIMITED':response.status===451?'SIGNAL_LOCATION_RESTRICTED':'SIGNAL_READ_FAILED');
   return response.json();
  }
- const start=performance.now(),clock=await get('time');
- const clockReceivedAt=performance.now();
+ const clockLocalStartedAt=Date.now(),start=performance.now(),clock=await get('time');
+ const clockReceivedAt=performance.now(),clockLocalReceivedAt=Date.now();
  if(!Number.isSafeInteger(clock?.serverTime)||clock.serverTime<=0)throw Error('SIGNAL_CLOCK_INVALID');
  const endTime=Math.floor(clock.serverTime/60000)*60000-1;
  const raw=await get('klines?symbol=BTCUSDT&interval=1m&limit=120&endTime='+endTime);
  if(performance.now()-start>15000)throw Error('SIGNAL_READ_STALE');
- return {raw,serverTime:clock.serverTime,clockReceivedAt};
+ return {raw,serverTime:clock.serverTime,clockReceivedAt,clockStartedAt:start,clockLocalStartedAt,clockLocalReceivedAt};
 }
 export function evaluateSignal(raw:unknown,serverTime:number){
  if(!Number.isSafeInteger(serverTime)||serverTime<=0||!Array.isArray(raw)||raw.length!==120)throw Error('SIGNAL_CANDLES_INVALID');

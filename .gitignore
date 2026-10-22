@@ -35,3 +35,9 @@ coverage/
 .testnet_monitor_intervals.json*
 
 .testnet_scoped/
+
+# Authoritative Windows snapshots and SQLite WAL/SHM files
+*.durable/
+
+# Frozen public research datasets
+.testnet_backtests/
