@@ -40,7 +40,8 @@
     "testnet:strategy-backtest": "node --import tsx scripts/backtest_ema_cross.ts",
     "testnet:strategy-compare": "node --import tsx scripts/compare_backtest_costs.ts",
     "testnet:strategy-periods": "node --import tsx scripts/compare_backtest_periods.ts",
-    "testnet:reference-cadence": "node --import tsx scripts/probe_reference_cadence.ts"
+    "testnet:reference-cadence": "node --import tsx scripts/probe_reference_cadence.ts",
+    "testnet:decision-monitor": "node --import tsx scripts/monitor_scoped_decisions.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
