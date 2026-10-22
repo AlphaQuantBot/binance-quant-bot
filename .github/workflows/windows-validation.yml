@@ -45,6 +45,9 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Windows private-storage preflight
+        run: node --import tsx scripts/check_private_storage.ts
+
       - name: TypeScript lint
         run: npm.cmd run lint
 

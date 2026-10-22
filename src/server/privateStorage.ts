@@ -1,3 +1,4 @@
+import {confirmWindowsAclResult} from './privateStorageDiagnostics';
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -38,8 +39,9 @@ function windowsAcl(file:string,apply:boolean){
  const env:NodeJS.ProcessEnv={AQ_PRIVATE_STORAGE_PATH:path.resolve(file),AQ_PRIVATE_STORAGE_APPLY:apply?'1':'0'};
  for(const name of ['SystemRoot','WINDIR','SystemDrive','TEMP','TMP'])if(process.env[name])env[name]=process.env[name];
  const executable=path.join(process.env.SystemRoot??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+ const startedAt=performance.now();
  const result=spawnSync(executable,['-NoLogo','-NoProfile','-NonInteractive','-Command',aclScript],{env,encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:65536});
- if(result.error||result.status!==0||result.stdout.trim()!=='AQ_PRIVATE_OK')throw Error('PRIVATE_STORAGE_ACL_UNCONFIRMED');
+ confirmWindowsAclResult(result,performance.now()-startedAt);
 }
 export function assertPrivateDirectory(file:string){
  const info=fs.lstatSync(file);if(info.isSymbolicLink()||!info.isDirectory())throw Error('PRIVATE_STORAGE_INVALID');
