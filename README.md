@@ -41,13 +41,28 @@ Botlar körü körüne rastgele veya aşırı şişmiş tokenleri almaz; 470+ Bi
 
 ---
 
+## 💎 $QUANT Token & Web3 Ekosistemi (BNB Chain BEP-20)
+
+Projenin yerel fayda, staking ve yakım tokeni olan **$QUANT**, BNB Smart Chain üzerinde üretilmiştir:
+
+* 💎 **Sözleşme Adresi (Contract):** [`0x397397895fac99de11f5893bc46e32324d313d92`](https://bscscan.com/token/0x397397895fac99de11f5893bc46e32324d313d92)
+* 📄 **Akıllı Sözleşme Kodu:** [`contracts/QuantToken.sol`](contracts/QuantToken.sol)
+* 📘 **Resmi Whitepaper:** [`WHITEPAPER.md`](WHITEPAPER.md)
+* 🚀 **5-Dakikada Dağıtım Rehberi:** [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md)
+* 🗳️ **CoinSniper Resmi Oylama:** [`coinsniper.net/coin/94828`](https://coinsniper.net/coin/94828)
+* 🪙 **Sabit Toplam Arz:** `100,000,000 QUANT` (Ekstra basım yetkisi yoktur)
+* 🔥 **Buyback & Burn:** Borsa al-sat komisyonlarının %50'si ile piyasadan $QUANT satın alınıp kalıcı olarak yakılır.
+* 🏆 **VIP Staking Kademeleri:** Cüzdanda $QUANT tutarak Erken Gem Radarı ve Balina Alarmlarını ücretsiz açma hakkı.
+
+---
+
 ## 🎁 %20 Komisyon İndirimiyle Kaydolun & Ücretsiz Kullanın
 
 Bu bot platformunu **ömür boyu ücretsiz** kullanmak ve borsa işlemlerinizde en düşük komisyon oranlarından faydalanmak için resmi Binance referans bağlantımızla kayıt olabilirsiniz:
 
 * 🔗 **Referans Bağlantısı:** [Binance %20 İndirimli Kayıt Linki](https://accounts.binance.com/en/register?ref=XADYK9G1)
 * 🏷️ **Referans Kodu:** `XADYK9G1`
-* 💬 **Topluluk & Destek:** [Telegram VIP Grubumuz](https://t.me/BinanceQuantBotCommunity)
+* 💬 **Resmi Telegram Topluluğumuz:** [https://t.me/+6Fdw5kR4SJE2ZjU0](https://t.me/+6Fdw5kR4SJE2ZjU0)
 
 ---
 
@@ -59,8 +74,8 @@ Bu bot platformunu **ömür boyu ücretsiz** kullanmak ve borsa işlemlerinizde 
 
 ### 1. Repoyu Klonlayın
 ```bash
-git clone https://github.com/KULLANICI_ADINIZ/binance-quant-scalper.git
-cd binance-quant-scalper
+git clone https://github.com/AlphaQuantBot/binance-quant-bot.git
+cd binance-quant-bot
 ```
 
 ### 2. Bağımlılıkları Yükleyin
