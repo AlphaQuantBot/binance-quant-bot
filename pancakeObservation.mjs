@@ -1,5 +1,7 @@
 /** Consolidate values already received by the existing panels; no I/O or trading. */
-export function consolidateObservation({pool=null,radar=[],listings=[]}={}) {
+/** @param {{pool?: unknown, radar?: unknown[], listings?: unknown[]}} [input] */
+export function consolidateObservation(input={}) {
+  const {pool=null,radar=[],listings=[]}=input;
   const rows=new Map(), invalid=[];
   const add=(source,item,address)=>{
     if(typeof address!=='string'||!/^0x[a-fA-F0-9]{40}$/.test(address)) {
