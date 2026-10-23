@@ -1,0 +1,33 @@
+name: Parameter summary validation
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.0'
+      - run: node --test tests/pancakeObservation.test.mjs tests/observationIntegration.test.mjs
+      - name: Install isolated validation tools
+        run: |
+          mkdir /tmp/summary-check
+          cd /tmp/summary-check
+          npm init -y
+          npm install --no-audit --no-fund typescript@7.0.2 @types/react@19.3.0 react@19.0.1 esbuild@0.28.2
+      - name: Check summary types
+        run: |
+          mkdir -p /tmp/summary-check/source
+          cp PancakeObservationSummary.tsx pancakeObservation.mjs tsconfig.parameter-summary.json /tmp/summary-check/source/
+          /tmp/summary-check/node_modules/.bin/tsc -p /tmp/summary-check/source/tsconfig.parameter-summary.json
+      - name: Check patched component syntax and summary bundle
+        run: |
+          /tmp/summary-check/node_modules/.bin/esbuild PancakeObservationSummary.tsx --bundle --external:react --outfile=/tmp/summary-check/summary.js
+          /tmp/summary-check/node_modules/.bin/esbuild PancakeDEXAutomation.tsx PancakeUpcomingListings.tsx --outdir=/tmp/summary-check/syntax
