@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { playOrderChime, playProfitChime } from '../utils/audioChimes';
 import { PancakeUpcomingListings } from './PancakeUpcomingListings';
+import { PancakeObservationSummary } from './PancakeObservationSummary';
 import { UpcomingListingToken } from '../types/crypto';
 import { copyToClipboard } from '../utils/clipboard';
 import { getPancakeSwapSwapUrl } from '../utils/pancakeSwapUrl';
@@ -164,6 +165,19 @@ export const PancakeDEXAutomation: React.FC = () => {
   const [buybackHistory, setBuybackHistory] = useState<BuybackEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [copiedContract, setCopiedContract] = useState(false);
+
+  // Consolidation only: reuse responses already read by the existing modules.
+  const [observationMeta, setObservationMeta] = useState<Record<string,{at:number|null;error:boolean}>>({});
+  const [observationListings, setObservationListings] = useState<UpcomingListingToken[]>([]);
+  const onListingObservation = React.useCallback((tokens:UpcomingListingToken[],meta:{at:number|null;error:boolean})=>{
+    setObservationListings(tokens);
+    setObservationMeta(previous=>({...previous,'upcoming-listings':meta}));
+  },[]);
+  const markObservation=(source:string,success:boolean)=>{
+    setObservationMeta(previous=>({...previous,[source]:{
+      at:success?Date.now():previous[source]?.at??null,error:!success
+    }}));
+  };
 
   // In-app swap state
   const [inputBnb, setInputBnb] = useState<string>('0.001');
@@ -426,39 +440,38 @@ export const PancakeDEXAutomation: React.FC = () => {
   const [takeProfitTarget, setTakeProfitTarget] = useState<string>('0.000003500');
   const [sniperActive, setSniperActive] = useState<boolean>(true);
 
-  // Fetch pool stats from server
+  // Existing reads retained; each source reports its own receipt/error state.
   const fetchPoolStats = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const res = await fetch('/api/pancakeswap/pool-stats');
-      const data = await res.json();
-      if (data.success) {
-        setPoolStats(data);
-      }
-      const historyRes = await fetch('/api/pancakeswap/buyback-history');
-      const historyData = await historyRes.json();
-      if (historyData.success) {
-        setBuybackHistory(historyData.history);
-      }
-    } catch (err) {
-      console.error('Pool stats fetch error:', err);
-    } finally {
-      setLoading(false);
+      const res=await fetch('/api/pancakeswap/pool-stats');
+      const data=await res.json();
+      if(!res.ok||!data.success)throw Error('POOL_READ_FAILED');
+      setPoolStats(data);markObservation('pool-stats',true);
+    } catch {
+      markObservation('pool-stats',false);
+    } finally {setLoading(false);}
+    try {
+      const res=await fetch('/api/pancakeswap/buyback-history');
+      const data=await res.json();
+      if(!res.ok||!data.success||!Array.isArray(data.history))throw Error('HISTORY_READ_FAILED');
+      setBuybackHistory(data.history);markObservation('buyback-history',true);
+    } catch {
+      markObservation('buyback-history',false);
     }
   };
 
-  // Fetch DEX Scalper Status & Scanned Pairs
   const fetchScalperStatus = async () => {
     try {
-      const res = await fetch('/api/pancakeswap/scalper/status');
-      const data = await res.json();
-      if (data.success) {
-        if (data.settings) setScalperSettings(data.settings);
-        if (data.scannedTokens) setScannedTokens(data.scannedTokens);
-        if (data.activePositions) setActivePositions(data.activePositions);
-      }
-    } catch (err) {
-      console.error('Scalper status fetch error:', err);
+      const res=await fetch('/api/pancakeswap/scalper/status');
+      const data=await res.json();
+      if(!res.ok||!data.success)throw Error('RADAR_READ_FAILED');
+      if(data.settings)setScalperSettings(data.settings);
+      if(Array.isArray(data.scannedTokens))setScannedTokens(data.scannedTokens);
+      if(Array.isArray(data.activePositions))setActivePositions(data.activePositions);
+      markObservation('scalper/status',true);
+    } catch {
+      markObservation('scalper/status',false);
     }
   };
 
@@ -778,6 +791,11 @@ export const PancakeDEXAutomation: React.FC = () => {
 
   return (
     <div className="space-y-4">
+      <PancakeObservationSummary
+        pool={poolStats} radar={scannedTokens} listings={observationListings}
+        history={buybackHistory} positions={activePositions} settings={scalperSettings}
+        metadata={observationMeta}
+      />
       {/* Hero Live Telemetry Banner */}
       <div className="relative overflow-hidden rounded-xl border border-cyan-500/30 bg-gradient-to-r from-slate-900 via-sky-950/40 to-slate-900 p-5 shadow-xl">
         <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
@@ -1297,6 +1315,7 @@ export const PancakeDEXAutomation: React.FC = () => {
             </div>
           )}
           <PancakeUpcomingListings
+            onObservation={onListingObservation}
             onQuickBuy={(token) => {
               handleQuickPancakeSwapBuy({
                 id: `token-${token.address}`,

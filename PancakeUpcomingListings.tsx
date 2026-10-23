@@ -34,6 +34,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { getPancakeSwapSwapUrl } from '../utils/pancakeSwapUrl';
 
 interface PancakeUpcomingListingsProps {
+  onObservation?: (tokens:UpcomingListingToken[],meta:{at:number|null;error:boolean})=>void;
   onQuickBuy?: (token: { 
     address: string; 
     symbol: string; 
@@ -54,12 +55,15 @@ import { VERIFIED_UPCOMING_TOKENS } from '../data/verifiedUpcomingTokens';
 const FALLBACK_UPCOMING_TOKENS: UpcomingListingToken[] = VERIFIED_UPCOMING_TOKENS;
 
 export const PancakeUpcomingListings: React.FC<PancakeUpcomingListingsProps> = ({
+  onObservation,
   onQuickBuy,
   onCopyAddress,
   copiedTokenAddress: externalCopied,
   walletBnbBalance
 }) => {
   const [tokens, setTokens] = useState<UpcomingListingToken[]>(FALLBACK_UPCOMING_TOKENS);
+  const [observationMeta,setObservationMeta]=useState<{at:number|null;error:boolean}>({at:null,error:false});
+  useEffect(()=>{onObservation?.(tokens,observationMeta);},[tokens,observationMeta,onObservation]);
   const [loading, setLoading] = useState(false);
   const [selectedExchange, setSelectedExchange] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'potential' | 'safety' | 'date' | 'whale'>('potential');
@@ -272,19 +276,18 @@ export const PancakeUpcomingListings: React.FC<PancakeUpcomingListingsProps> = (
 
   const fetchUpcoming = async (silent = false) => {
     try {
-      if (!silent) setIsRefreshing(true);
-      const res = await fetch('/api/pancakeswap/upcoming-listings');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.success && Array.isArray(data.tokens) && data.tokens.length > 0) {
-          setTokens(data.tokens);
-        }
-      }
-      setLastCheckTime(new Date());
-    } catch (err) {
-      console.error('Failed to fetch upcoming listing tokens:', err);
+      if(!silent)setIsRefreshing(true);
+      const res=await fetch('/api/pancakeswap/upcoming-listings');
+      const data=await res.json();
+      if(!res.ok||!data?.success||!Array.isArray(data.tokens))throw Error('LISTINGS_READ_FAILED');
+      setTokens(data.tokens);
+      const now=new Date();
+      setLastCheckTime(now);
+      setObservationMeta({at:now.getTime(),error:false});
+    } catch {
+      setObservationMeta(previous=>({...previous,error:true}));
     } finally {
-      if (!silent) setIsRefreshing(false);
+      if(!silent)setIsRefreshing(false);
     }
   };
 
