@@ -1,3 +1,4 @@
+import {installOfficialListingWatch} from './listingWatchRoute.mjs';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -16,6 +17,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Optional read-only official listing feed; no existing endpoint is replaced.
+installOfficialListingWatch(app);
 
 let lastBalanceCache: { time: number; apiKey: string; exchange: string; data: any } | null = null;
 let activeServerCredentials: { apiKey: string; secretKey: string; exchange: string; updatedAt: number; liveBalance?: number; availableCash?: number } | null = null;

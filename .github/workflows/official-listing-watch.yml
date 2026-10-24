@@ -1,0 +1,34 @@
+name: Official listing watch validation
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  listing-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.0'
+      - run: node --test tests/listingWatch.test.mjs
+      - name: Install isolated validation tools
+        run: |
+          mkdir /tmp/listing-check
+          cd /tmp/listing-check
+          npm init -y
+          npm install --no-audit --no-fund typescript@7.0.2 @types/react@19.3.0 react@19.0.1 esbuild@0.28.2
+      - name: Type check and syntax checks
+        run: |
+          mkdir /tmp/listing-check/source
+          cp OfficialListingWatch.tsx tsconfig.listing-watch.json /tmp/listing-check/source/
+          /tmp/listing-check/node_modules/.bin/tsc -p /tmp/listing-check/source/tsconfig.listing-watch.json
+          /tmp/listing-check/node_modules/.bin/esbuild OfficialListingWatch.tsx --bundle --external:react --outfile=/tmp/listing-check/panel.js
+          /tmp/listing-check/node_modules/.bin/esbuild server.ts --outfile=/tmp/listing-check/server.js
+      - name: Public source smoke probe (informational)
+        continue-on-error: true
+        run: node scripts/read_listing_watch.mjs --summary
